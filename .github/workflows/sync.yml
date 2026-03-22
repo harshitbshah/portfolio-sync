@@ -2,7 +2,7 @@ name: Sync Zerodha to Monarch Money
 
 on:
   schedule:
-    - cron: "0 11 * * 1-5"  # 6 AM EST (UTC-5), Mon-Fri — after Indian markets close (3:30 PM IST)
+    - cron: "0 10 * * 1-5"  # 5 AM EST / 6 AM EDT, Mon-Fri — after Indian markets close (3:30 PM IST)
   workflow_dispatch:       # Allow manual trigger
 
 jobs:
