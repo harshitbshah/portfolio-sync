@@ -123,31 +123,26 @@ In your repo → **Settings → Secrets and variables → Actions**:
 | `GSHEET_LABEL` | Row label to search for | `Indian PF` |
 | `MONARCH_ACCOUNT_NAME` | Display name of your Monarch manual account | `Zerodha` |
 
-### 5. Fork and enable Actions
+### 5. Run it
 
-Fork this repo — your fork gets its own secrets and variables, so nothing in the code needs changing. Add your secrets and variables from step 4, and the workflow will run automatically.
+**GitHub Actions (recommended — fully automated, no local machine needed):**
+Fork this repo, add your secrets and variables from step 4, and the workflow runs automatically on schedule. Trigger a manual run anytime from the **Actions** tab.
 
-You can also trigger a manual run anytime from the **Actions** tab using **Run workflow**.
+**Locally:**
+Clone the repo, copy `.env.example` to `.env`, fill in your values, then run:
+```bash
+pip install google-auth google-auth-httplib2 google-api-python-client
+cp .env.example .env
+# edit .env with your values
+export $(cat .env | xargs) && python sync.py
+```
+
+For daily automated runs, add to crontab:
+```
+0 10 * * 1-5 cd /path/to/zerodha-monarch-sync && export $(cat .env | xargs) && /path/to/venv/bin/python sync.py >> sync.log 2>&1
+```
 
 ## Token expiry
 
 Monarch tokens are long-lived (months). If the sync starts failing with auth errors, re-run step 3 to get a fresh token and update the `MONARCH_TOKEN` secret.
 
-## Local cron alternative
-
-If you prefer running locally instead of GitHub Actions:
-
-```bash
-pip install google-auth google-auth-httplib2 google-api-python-client monarchmoneycommunity
-
-# Set env vars and add to crontab
-GSHEET_SHEET_ID=your-id \
-GSHEET_SERVICE_ACCOUNT_JSON=$(cat /path/to/key.json) \
-MONARCH_TOKEN=your-token \
-python sync.py
-```
-
-Add to crontab for daily runs:
-```
-0 10 * * 1-5 GSHEET_SHEET_ID=... MONARCH_TOKEN=... GSHEET_SERVICE_ACCOUNT_JSON=... /path/to/venv/bin/python /path/to/sync.py >> /path/to/sync.log 2>&1
-```
