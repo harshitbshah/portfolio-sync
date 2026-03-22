@@ -10,11 +10,11 @@ from pathlib import Path
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-# ── Config ────────────────────────────────────────────────────────────────────
-SHEET_ID = "10AjE53pQv-NKO-YoQsVjsOzNRRXjdUPkmleTzDBYoBk"
-SHEET_TAB = "PF Summary"
-LABEL_TO_FIND = "Indian PF"
-MONARCH_ACCOUNT_NAME = "Zerodha"  # Display name of the manual account in Monarch Money
+# ── Config (all overridable via environment variables) ────────────────────────
+SHEET_ID = os.environ["GSHEET_SHEET_ID"]
+SHEET_TAB = os.getenv("GSHEET_TAB", "PF Summary")
+LABEL_TO_FIND = os.getenv("GSHEET_LABEL", "Indian PF")
+MONARCH_ACCOUNT_NAME = os.getenv("MONARCH_ACCOUNT_NAME", "Zerodha")
 
 
 # ── Step 1: Read balance from Google Sheets ───────────────────────────────────

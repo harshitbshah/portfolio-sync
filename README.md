@@ -104,14 +104,25 @@ asyncio.run(main())
 "
 ```
 
-### 5. GitHub Secrets
+### 5. GitHub Secrets & Variables
 
-In your repo → **Settings → Secrets → Actions**, add:
+In your repo → **Settings → Secrets and variables → Actions**:
+
+**Secrets** (sensitive, never visible after saving):
 
 | Secret | Value |
 |--------|-------|
 | `GSHEET_SERVICE_ACCOUNT_JSON` | Full contents of the service account JSON key file |
-| `MONARCH_TOKEN` | Token string from step 4 |
+| `MONARCH_TOKEN` | Your Monarch Money auth token (from step 4) |
+
+**Variables** (non-sensitive config, visible in logs):
+
+| Variable | Value | Default |
+|----------|-------|---------|
+| `GSHEET_SHEET_ID` | Your Google Sheet ID (from the URL) | required |
+| `GSHEET_TAB` | Sheet tab name | `PF Summary` |
+| `GSHEET_LABEL` | Row label to search for | `Indian PF` |
+| `MONARCH_ACCOUNT_NAME` | Display name of your Monarch manual account | `Zerodha` |
 
 ### 6. Fork and enable Actions
 

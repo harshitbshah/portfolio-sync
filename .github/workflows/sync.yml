@@ -20,6 +20,12 @@ jobs:
 
       - name: Run sync
         env:
+          # Secrets
           GSHEET_SERVICE_ACCOUNT_JSON: ${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}
           MONARCH_TOKEN: ${{ secrets.MONARCH_TOKEN }}
+          # Config (override via repo variables if needed)
+          GSHEET_SHEET_ID: ${{ vars.GSHEET_SHEET_ID }}
+          GSHEET_TAB: ${{ vars.GSHEET_TAB }}
+          GSHEET_LABEL: ${{ vars.GSHEET_LABEL }}
+          MONARCH_ACCOUNT_NAME: ${{ vars.MONARCH_ACCOUNT_NAME }}
         run: python sync.py
