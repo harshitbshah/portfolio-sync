@@ -113,6 +113,8 @@ In your repo → **Settings → Secrets and variables → Actions**:
 |--------|-------|
 | `GSHEET_SERVICE_ACCOUNT_JSON` | Full contents of the service account JSON key file |
 | `MONARCH_TOKEN` | Token extracted in step 3 |
+| `NOTIFY_EMAIL` | Gmail address to send failure notifications from |
+| `NOTIFY_EMAIL_APP_PASSWORD` | Gmail App Password (not your login password) — create at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) |
 
 **Variables** (non-sensitive config):
 
@@ -142,7 +144,11 @@ For daily automated runs, add to crontab:
 0 10 * * 1-5 cd /path/to/zerodha-monarch-sync && export $(cat .env | xargs) && /path/to/venv/bin/python sync.py >> sync.log 2>&1
 ```
 
+## Failure notifications
+
+If the workflow fails, an email is sent automatically to the address configured in `NOTIFY_EMAIL`. This is useful for catching Monarch token expiry without having to manually check GitHub Actions.
+
 ## Token expiry
 
-Monarch tokens are long-lived (months). If the sync starts failing with auth errors, re-run step 3 to get a fresh token and update the `MONARCH_TOKEN` secret.
+Monarch tokens are long-lived (months). If the sync starts failing with auth errors (you'll get an email), re-run step 3 to get a fresh token and update the `MONARCH_TOKEN` secret.
 
