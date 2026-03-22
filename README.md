@@ -123,14 +123,11 @@ In your repo → **Settings → Secrets and variables → Actions**:
 | `GSHEET_LABEL` | Row label to search for | `Indian PF` |
 | `MONARCH_ACCOUNT_NAME` | Display name of your Monarch manual account | `Zerodha` |
 
-### 5. Enable Actions
+### 5. Fork and enable Actions
 
-You have two options:
+Fork this repo — your fork gets its own secrets and variables, so nothing in the code needs changing. Add your secrets and variables from step 4, and the workflow will run automatically.
 
-- **Use this repo directly** — if you don't need any code changes, simply copy `sync.py` and `.github/workflows/sync.yml` into your own repo, add your secrets and variables, and the workflow will run automatically.
-- **Fork** — if you want your own copy to modify (e.g. different sheet structure, additional logic).
-
-Either way, you can trigger a manual run anytime from the **Actions** tab using **Run workflow**.
+You can also trigger a manual run anytime from the **Actions** tab using **Run workflow**.
 
 ## Token expiry
 
