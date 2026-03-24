@@ -5,7 +5,6 @@ import json
 import os
 import re
 import sys
-from pathlib import Path
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -16,19 +15,26 @@ SHEET_TAB = os.getenv("GSHEET_TAB", "PF Summary")
 LABEL_TO_FIND = os.getenv("GSHEET_LABEL", "Indian PF")
 MONARCH_ACCOUNT_NAME = os.getenv("MONARCH_ACCOUNT_NAME", "Zerodha")
 
-# Emergency fund account names in Monarch → sheet row number (1-indexed, row 1 = header)
-EMERGENCY_FUND_ACCOUNTS = json.loads(os.getenv("EMERGENCY_FUND_ACCOUNTS_JSON", json.dumps([
-    {"name": "Checking (...8843)",           "row": 2},
-    {"name": "TOTAL CHECKING (...6986)",     "row": 3},
-    {"name": "ICICI",                        "row": 4},
-    {"name": "PayPal",                       "row": 5},
-    {"name": "PPF",                          "row": 6},
-    {"name": "14 MONTH CD (...9868)",        "row": 7},
-    {"name": "Certificate of Deposit (...3294)", "row": 8},
-    {"name": "Certificate of Deposit (...6677)", "row": 9},
+# Maps Monarch accounts to sheet rows via stable identifiers.
+# Use "mask" (last 4 digits) for institution-synced accounts.
+# Use "monarch_name" for manual accounts (no mask).
+# sheet_category + sheet_institution locate the row dynamically at runtime.
+# For duplicate category+institution (e.g. two Chase or two Marcus rows),
+# entries are matched in the order they appear in the sheet.
+SHEET_ACCOUNTS = json.loads(os.getenv("ACCOUNTS_JSON", json.dumps([
+    {"mask": "8843", "sheet_category": "Bank", "sheet_institution": "Chase"},
+    {"mask": "6986", "sheet_category": "Bank", "sheet_institution": "Chase"},
+    {"monarch_name": "ICICI",  "sheet_category": "Bank", "sheet_institution": "ICICI"},
+    {"monarch_name": "PayPal", "sheet_category": "Bank", "sheet_institution": "PayPal"},
+    {"monarch_name": "PPF",    "sheet_category": "PPF",  "sheet_institution": "ICICI"},
+    {"mask": "9868", "sheet_category": "CDs", "sheet_institution": "Synchrony"},
+    {"mask": "3294", "sheet_category": "CDs", "sheet_institution": "Marcus"},
+    {"mask": "6677", "sheet_category": "CDs", "sheet_institution": "Marcus"},
 ])))
 
-SGOV_TOTAL_CELL = os.getenv("SGOV_TOTAL_CELL", "F5")
+# Label to search for in the sheet to locate the SGOV quantity cell.
+# The value is written to the cell immediately to the right of this label.
+SGOV_LABEL = os.getenv("SGOV_LABEL", "Total")
 
 
 # ── Google Sheets helpers ─────────────────────────────────────────────────────
@@ -46,8 +52,8 @@ def _sheets_service(readonly: bool = True):
     return build("sheets", "v4", credentials=creds)
 
 
-# ── Step 1: Read Indian PF balance from Google Sheets ─────────────────────────
-def get_indian_pf_balance() -> float:
+def _read_sheet_rows() -> list:
+    """Return all rows from the sheet tab."""
     service = _sheets_service(readonly=True)
     result = (
         service.spreadsheets()
@@ -55,7 +61,12 @@ def get_indian_pf_balance() -> float:
         .get(spreadsheetId=SHEET_ID, range=f"'{SHEET_TAB}'")
         .execute()
     )
-    rows = result.get("values", [])
+    return result.get("values", [])
+
+
+# ── Step 1: Read Indian PF balance from Google Sheets ─────────────────────────
+def get_indian_pf_balance() -> float:
+    rows = _read_sheet_rows()
     for row in rows:
         for i, cell in enumerate(row):
             if cell.strip() == LABEL_TO_FIND and i + 1 < len(row):
@@ -85,7 +96,7 @@ def monarch_request(token: str, payload: bytes) -> dict:
 
 def get_monarch_accounts(token: str) -> list:
     payload = json.dumps({
-        "query": "{ accounts { id displayName isHidden deactivatedAt displayBalance type { name } } }",
+        "query": "{ accounts { id displayName isHidden deactivatedAt displayBalance mask type { name } } }",
     }).encode()
     result = monarch_request(token, payload)
     return result.get("data", {}).get("accounts", [])
@@ -142,19 +153,42 @@ def update_monarch(balance: float) -> None:
     print(f"Updated: {updated.get('displayName')} → ${updated.get('displayBalance'):,.2f}")
 
 
-# ── Step 3: Read emergency fund balances + SGOV total from Monarch ────────────
-def get_emergency_fund_balances(token: str) -> dict[str, float]:
-    """Return {account_name: balance} for all emergency fund accounts."""
+# ── Step 3: Read account balances + SGOV total from Monarch ──────────────────
+def get_account_balances(token: str) -> dict[str, float]:
+    """Match Monarch accounts to SHEET_ACCOUNTS entries by mask or monarch_name.
+
+    Returns {entry_index: balance} keyed by position in SHEET_ACCOUNTS so
+    duplicate category+institution entries are handled unambiguously.
+    """
     accounts = get_monarch_accounts(token)
-    target_names = {entry["name"] for entry in EMERGENCY_FUND_ACCOUNTS}
-    balances = {}
-    for account in accounts:
-        name = account.get("displayName", "")
-        if name in target_names:
-            balances[name] = account.get("displayBalance", 0.0) or 0.0
-    missing = target_names - set(balances)
-    if missing:
-        print(f"  WARNING: could not find Monarch accounts: {missing}", file=sys.stderr)
+    balances: dict[int, float] = {}
+    unmatched: list[int] = []
+
+    for i, entry in enumerate(SHEET_ACCOUNTS):
+        matched = None
+        if "mask" in entry:
+            for acct in accounts:
+                if acct.get("mask") == entry["mask"]:
+                    matched = acct
+                    break
+        elif "monarch_name" in entry:
+            for acct in accounts:
+                if acct.get("displayName") == entry["monarch_name"]:
+                    matched = acct
+                    break
+
+        if matched is not None:
+            balances[i] = matched.get("displayBalance", 0.0) or 0.0
+        else:
+            unmatched.append(i)
+
+    if unmatched:
+        descs = [
+            entry.get("mask") or entry.get("monarch_name")
+            for entry in (SHEET_ACCOUNTS[i] for i in unmatched)
+        ]
+        print(f"  WARNING: could not match Monarch accounts: {descs}", file=sys.stderr)
+
     return balances
 
 
@@ -208,29 +242,70 @@ def get_sgov_total(token: str) -> float:
 
 
 # ── Step 4: Write balances back to Google Sheets ──────────────────────────────
-def update_google_sheet(balances: dict[str, float], sgov_total: float) -> None:
-    service = _sheets_service(readonly=False)
-    spreadsheets = service.spreadsheets()
+def _resolve_sheet_rows(rows: list) -> list[int | None]:
+    """Return sheet row number (1-indexed) for each entry in SHEET_ACCOUNTS.
 
-    # Build batch update: emergency fund balances
+    Matches by sheet_category (col A) + sheet_institution (col B) in order,
+    consuming each match so duplicate rows are assigned correctly.
+    """
+    # Build ordered list of (category, institution, 1-indexed row)
+    candidates = []
+    for row_idx, row in enumerate(rows):
+        cat = row[0].strip() if len(row) > 0 else ""
+        inst = row[1].strip() if len(row) > 1 else ""
+        if cat and inst:
+            candidates.append([cat, inst, row_idx + 1, False])  # False = not yet used
+
+    result: list[int | None] = []
+    for entry in SHEET_ACCOUNTS:
+        cat = entry["sheet_category"]
+        inst = entry["sheet_institution"]
+        found = None
+        for candidate in candidates:
+            if candidate[0] == cat and candidate[1] == inst and not candidate[3]:
+                candidate[3] = True  # mark as used
+                found = candidate[2]
+                break
+        if found is None:
+            print(f"  WARNING: could not find sheet row for {cat}/{inst}", file=sys.stderr)
+        result.append(found)
+    return result
+
+
+def _find_sgov_cell(rows: list) -> str:
+    """Return the A1 address of the cell to the right of SGOV_LABEL."""
+    col_letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    for row_idx, row in enumerate(rows):
+        for col_idx, cell in enumerate(row):
+            if cell.strip() == SGOV_LABEL and col_idx + 1 < 26:
+                return f"{col_letters[col_idx + 1]}{row_idx + 1}"
+    raise ValueError(f"Could not find SGOV label '{SGOV_LABEL}' in sheet")
+
+
+def update_google_sheet(balances: dict[int, float], sgov_total: float) -> None:
+    rows = _read_sheet_rows()
+    row_numbers = _resolve_sheet_rows(rows)
+    sgov_cell = _find_sgov_cell(rows)
+
+    service = _sheets_service(readonly=False)
     data = []
-    for entry in EMERGENCY_FUND_ACCOUNTS:
-        name = entry["name"]
-        row = entry["row"]
-        balance = balances.get(name)
-        if balance is None:
-            print(f"  Skipping '{name}' (not found in Monarch)")
+
+    for i, entry in enumerate(SHEET_ACCOUNTS):
+        balance = balances.get(i)
+        row = row_numbers[i]
+        if balance is None or row is None:
+            label = entry.get("mask") or entry.get("monarch_name")
+            print(f"  Skipping '{label}' (not matched)")
             continue
         cell = f"'{SHEET_TAB}'!C{row}"
         data.append({"range": cell, "values": [[round(balance, 2)]]})
-        print(f"  {name} → C{row}: ${balance:,.2f}")
+        label = entry.get("mask") or entry.get("monarch_name")
+        print(f"  {label} → C{row}: ${balance:,.2f}")
 
-    # SGOV total
-    sgov_cell = f"'{SHEET_TAB}'!{SGOV_TOTAL_CELL}"
-    data.append({"range": sgov_cell, "values": [[sgov_total]]})
-    print(f"  SGOV total → {SGOV_TOTAL_CELL}: {sgov_total:,.4f} shares")
+    data.append({"range": f"'{SHEET_TAB}'!{sgov_cell}", "values": [[sgov_total]]})
+    print(f"  SGOV total → {sgov_cell}: {sgov_total:,.4f} shares")
 
-    spreadsheets.values().batchUpdate(
+    service.spreadsheets().values().batchUpdate(
         spreadsheetId=SHEET_ID,
         body={"valueInputOption": "RAW", "data": data},
     ).execute()
@@ -248,8 +323,8 @@ if __name__ == "__main__":
     update_monarch(balance)
 
     # Monarch → Google Sheets
-    print("\nFetching emergency fund balances from Monarch...")
-    balances = get_emergency_fund_balances(token)
+    print("\nFetching account balances from Monarch...")
+    balances = get_account_balances(token)
     print(f"  Found {len(balances)} accounts")
 
     print("Fetching SGOV total from Monarch...")
