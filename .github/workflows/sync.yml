@@ -47,6 +47,7 @@ jobs:
 
       - name: Format success email
         if: success()
+        id: format
         run: python format_email.py
 
       - name: Send success email
@@ -59,7 +60,7 @@ jobs:
           password: ${{ secrets.NOTIFY_EMAIL_APP_PASSWORD }}
           to: harshitspeaks@gmail.com
           from: harshitspeaks@gmail.com
-          subject: "✅ Portfolio sync — ${{ github.run_id }}"
+          subject: ${{ steps.format.outputs.subject }}
           body: "file://email_body.txt"
 
       - name: Send failure email
