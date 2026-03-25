@@ -1,75 +1,67 @@
-# zerodha-monarch-sync
+# portfolio-sync
 
-Automatically syncs your Indian portfolio balance from Google Sheets to [Monarch Money](https://www.monarchmoney.com) daily via GitHub Actions. No local machine needed.
+Daily automation that keeps a personal Google Sheet portfolio tracker in sync with live brokerage data. Runs on GitHub Actions, Mon–Fri at 5 AM EST.
 
-## Why this approach
+## What it does
 
-Monarch Money is a US-based personal finance app with no official API. Zerodha (India's largest broker) has an official API — [Kite Connect](https://kite.trade) — but it requires a paid subscription (₹2,000/month) and its session tokens expire daily, requiring a browser-based OAuth login each day.
+Two scripts run in sequence each weekday:
 
-This repo takes a pragmatic middle path:
+### 1. `sync.py` — Zerodha + Monarch balances → PF Summary sheet
 
-- **Google Sheets as the source of truth** — many NRI investors already maintain an Indian portfolio tracker in Sheets with live INR prices via `GOOGLEFINANCE` and a manual INR→USD conversion. No Kite API needed.
-- **Direct Monarch GraphQL** — Monarch has no public API, but their web app uses a GraphQL endpoint. The token is long-lived (months), making it suitable for unattended automation.
-- **GitHub Actions** — runs daily in the cloud after Indian market close, no local machine dependency.
+- Reads the **Indian PF** USD balance from the *PF Summary* tab and updates the manual Zerodha account in **Monarch Money**
+- Reads all US brokerage account balances from Monarch and writes them back to the *PF Summary* tab (bank accounts, CDs, etc.)
+- Tracks the total SGOV share count across all brokerage accounts
 
-### Long-term: direct Kite → Monarch sync
+### 2. `sync_us_portfolio.py` — Monarch holdings → US Portfolio sheet
 
-If you want to eliminate the Google Sheets middleman entirely, the full end-to-end would be:
+Monarch Money is the source of truth (it integrates with all brokerage accounts). This script:
+
+- **Updates** Column D (Quantity) for all tickers already in the *US Portfolio* tab
+- **Removes** rows for tickers no longer held in any brokerage account (closed positions)
+- **Inserts** new rows for tickers that appear in Monarch but not yet in the sheet — Theme and Conviction Rating are left blank for manual entry
+
+The Holdings column (E) auto-recalculates via `GOOGLEFINANCE` formulas once quantities are updated.
+
+## Architecture
 
 ```
-Kite Connect API → sum holdings in INR → Frankfurter API (INR/USD) → Monarch Money
+Google Sheets (Indian PF balance)     Monarch Money (brokerage-linked)
+              │                                   │
+              ▼                                   ▼
+          sync.py                    sync_us_portfolio.py
+              │                                   │
+     ┌────────┴────────┐              ┌───────────┴───────────┐
+     ▼                 ▼              ▼           ▼           ▼
+Update Zerodha   Write account    Update qty  Remove closed  Add new
+in Monarch       balances + SGOV  for tickers  positions    positions
+                       │                                   │
+                       └──────────────┬────────────────────┘
+                                      ▼
+                         Google Sheets (Personal tracker)
 ```
 
-The main friction point is **Kite's daily token expiry**. To fully automate it you'd need:
+## Sheet structure
 
-1. A paid [Kite Connect](https://kite.trade) subscription (₹2,000/month)
-2. TOTP-based programmatic login — store your Zerodha TOTP secret in GitHub Secrets and generate the OTP using the `pyotp` library
-3. Replace `get_indian_pf_balance()` in `sync.py` with a Kite SDK call:
-   ```python
-   from kiteconnect import KiteConnect
-   kite = KiteConnect(api_key=os.environ["KITE_API_KEY"])
-   holdings = kite.holdings()
-   total_inr = sum(h["last_price"] * h["quantity"] for h in holdings)
-   rate = requests.get("https://api.frankfurter.app/latest?from=INR&to=USD").json()["rates"]["USD"]
-   balance_usd = total_inr * rate
-   ```
-
-If you use the [Kite MCP](https://kite.trade/docs/connect/v3/) in Claude Code, you can also trigger the sync interactively without writing auth code — though this requires a manual login click per session and is better suited for on-demand use rather than scheduled automation.
-
-## How it works
-
-1. Reads your Google Sheet — searches for a labeled row (e.g. `Indian PF`) and reads the USD value in the next column
-2. Looks up your Monarch Money manual account by display name
-3. Updates the account balance via Monarch's GraphQL API
-4. Runs Mon–Fri at 10 AM UTC (5 AM EST / 6 AM EDT) — after Indian markets close at 3:30 PM IST
+| Tab | Managed by | Description |
+|-----|-----------|-------------|
+| PF Summary | `sync.py` | Net worth overview — bank, CDs, bonds, Indian + US PF totals |
+| US Portfolio | `sync_us_portfolio.py` | US equity positions with Theme, Quantity, Holdings, Conviction |
+| US PF P&L | Manual | Realized gains by year; performance vs SPY/QQQ |
+| Indian Portfolio | Manual | Indian equity holdings (INR) |
+| Indian PF P&L | Manual | Realized gains by Indian FY |
+| Subscriptions | Manual | Recurring subscription tracker |
 
 ## Setup
 
-### 1. Google Sheets
-
-Your sheet should have a row with a label and the USD value in the next column. Example:
-
-| Component | Amount | Percentage |
-|-----------|--------|------------|
-| Indian PF | $230,044.96 | 35.16% |
-| US PF | $424,178.51 | 64.84% |
-
-The label and tab name are configurable via GitHub Variables (see step 4).
-
-Get your **Sheet ID** from the URL:
-```
-https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit
-```
-
-### 2. Google Cloud service account
+### Google Cloud service account
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com)
 2. Create a project → enable **Google Sheets API**
-3. Go to **APIs & Services → Credentials → Create Credentials → Service Account**
+3. **APIs & Services → Credentials → Create Credentials → Service Account**
 4. Download the JSON key
-5. Share your Google Sheet with the service account email (Viewer access is enough)
+5. Share your Google Sheet with the service account email (**Editor** access — needed for writes)
 
-### 3. Monarch Money token
+### Monarch Money token
 
 Authenticate locally using the `monarchmoneycommunity` library:
 
@@ -93,7 +85,7 @@ async def main():
 asyncio.run(main())
 ```
 
-Then extract the token:
+Extract the token:
 ```bash
 python3 -c "
 import pickle
@@ -103,52 +95,82 @@ print(s['token'])
 "
 ```
 
-### 4. GitHub Secrets & Variables
+### GitHub Secrets
 
-In your repo → **Settings → Secrets and variables → Actions**:
+| Secret | Description |
+|--------|-------------|
+| `MONARCH_TOKEN` | Monarch Money API token — expires every few months (see [Token expiry](#token-expiry)) |
+| `GSHEET_SERVICE_ACCOUNT_JSON` | Full contents of the service account JSON key |
+| `NOTIFY_EMAIL` | Gmail address to send failure alerts from/to |
+| `NOTIFY_EMAIL_APP_PASSWORD` | Gmail App Password — create at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) |
 
-**Secrets** (sensitive):
+### GitHub Variables
 
-| Secret | Value |
-|--------|-------|
-| `GSHEET_SERVICE_ACCOUNT_JSON` | Full contents of the service account JSON key file |
-| `MONARCH_TOKEN` | Token extracted in step 3 |
-| `NOTIFY_EMAIL` | Gmail address to send failure notifications from |
-| `NOTIFY_EMAIL_APP_PASSWORD` | Gmail App Password (not your login password) — create at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GSHEET_SHEET_ID` | — | Google Sheet ID from the URL (`/spreadsheets/d/<ID>/edit`) |
+| `GSHEET_TAB` | `PF Summary` | Tab name for `sync.py` |
+| `GSHEET_LABEL` | `Indian PF` | Row label used to locate the Indian PF balance cell |
+| `MONARCH_ACCOUNT_NAME` | `Zerodha` | Monarch display name of the manual Zerodha account |
+| `ACCOUNTS_JSON` | *(see below)* | Maps Monarch accounts to PF Summary rows |
+| `SGOV_LABEL` | `Total:` | Label to locate the SGOV quantity cell in PF Summary |
 
-**Variables** (non-sensitive config):
+`ACCOUNTS_JSON` maps each brokerage account to a row in the PF Summary tab:
+```json
+[
+  {"mask": "1234", "sheet_category": "Bank", "sheet_institution": "Chase"},
+  {"mask": "5678", "sheet_category": "CDs",  "sheet_institution": "Marcus"},
+  {"monarch_name": "PayPal", "sheet_category": "Bank", "sheet_institution": "PayPal"}
+]
+```
+Use `mask` (last 4 digits) for institution-synced accounts, `monarch_name` for manual accounts.
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `GSHEET_SHEET_ID` | Your Google Sheet ID from the URL | `10AjE53pQ...` |
-| `GSHEET_TAB` | Sheet tab name | `PF Summary` |
-| `GSHEET_LABEL` | Row label to search for | `Indian PF` |
-| `MONARCH_ACCOUNT_NAME` | Display name of your Monarch manual account | `Zerodha` |
+## Running locally
 
-### 5. Run it
-
-**GitHub Actions (recommended — fully automated, no local machine needed):**
-Fork this repo, add your secrets and variables from step 4, and the workflow runs automatically on schedule. Trigger a manual run anytime from the **Actions** tab.
-
-**Locally:**
-Clone the repo, copy `.env.example` to `.env`, fill in your values, then run:
 ```bash
 pip install google-auth google-auth-httplib2 google-api-python-client
-cp .env.example .env
-# edit .env with your values
-export $(cat .env | xargs) && python sync.py
+
+# sync.py
+MONARCH_TOKEN=... \
+GSHEET_SHEET_ID=... \
+GSHEET_SERVICE_ACCOUNT_JSON="$(cat gsheet-key.json)" \
+python sync.py
+
+# sync_us_portfolio.py
+MONARCH_TOKEN=... \
+GSHEET_SHEET_ID=... \
+GSHEET_SERVICE_ACCOUNT_JSON="$(cat gsheet-key.json)" \
+python sync_us_portfolio.py
 ```
 
-For daily automated runs, add to crontab:
+## Maintenance
+
+### Token expiry
+
+Monarch tokens last several months. When one expires the workflow fails and you'll receive a failure email. To refresh:
+
+1. Re-run the login script above to get a new `monarch_session.pickle`
+2. Extract the token and update the `MONARCH_TOKEN` GitHub Secret
+
+### New positions (US Portfolio)
+
+When `sync_us_portfolio.py` inserts a new row, **Theme** and **Conviction Rating** are left blank — fill these in manually after the next run. Column B (ticker) will show a Google Sheets suggestion to "Add Finance chip" — clicking it is optional and purely cosmetic; the `GOOGLEFINANCE` formula in column E uses the ticker directly.
+
+### Closed positions (US Portfolio)
+
+Rows are deleted automatically when a ticker is no longer found in any Monarch brokerage account. If a position disappears temporarily due to a brokerage sync delay, it will be re-inserted on the next run (with blank Theme/Conviction — keep an eye on this).
+
+### Why not Kite Connect directly?
+
+Kite Connect (Zerodha's official API) requires a paid subscription (₹2,000/month) and its session tokens expire daily — requiring a browser OAuth login each day. Using Google Sheets as the intermediary avoids both costs. If you want to eliminate the Sheets middleman:
+
+```python
+from kiteconnect import KiteConnect
+kite = KiteConnect(api_key=os.environ["KITE_API_KEY"])
+holdings = kite.holdings()
+total_inr = sum(h["last_price"] * h["quantity"] for h in holdings)
+rate = requests.get("https://api.frankfurter.app/latest?from=INR&to=USD").json()["rates"]["USD"]
+balance_usd = total_inr * rate
 ```
-0 10 * * 1-5 cd /path/to/zerodha-monarch-sync && export $(cat .env | xargs) && /path/to/venv/bin/python sync.py >> sync.log 2>&1
-```
 
-## Failure notifications
-
-If the workflow fails, an email is sent automatically to the address configured in `NOTIFY_EMAIL`. This is useful for catching Monarch token expiry without having to manually check GitHub Actions.
-
-## Token expiry
-
-Monarch tokens are long-lived (months). If the sync starts failing with auth errors (you'll get an email), re-run step 3 to get a fresh token and update the `MONARCH_TOKEN` secret.
-
+You'd also need TOTP-based programmatic login using `pyotp` with your Zerodha TOTP secret stored in GitHub Secrets.
