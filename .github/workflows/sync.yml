@@ -30,14 +30,27 @@ jobs:
           MONARCH_ACCOUNT_NAME: ${{ vars.MONARCH_ACCOUNT_NAME }}
           ACCOUNTS_JSON: ${{ vars.ACCOUNTS_JSON }}
           SGOV_LABEL: ${{ vars.SGOV_LABEL }}
-        run: python sync.py
+        run: python sync.py | tee -a sync_output.txt
 
       - name: Sync Monarch holdings → US Portfolio sheet
         env:
           GSHEET_SERVICE_ACCOUNT_JSON: ${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}
           MONARCH_TOKEN: ${{ secrets.MONARCH_TOKEN }}
           GSHEET_SHEET_ID: ${{ vars.GSHEET_SHEET_ID }}
-        run: python sync_us_portfolio.py
+        run: python sync_us_portfolio.py | tee -a sync_output.txt
+
+      - name: Send success email
+        if: success()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.NOTIFY_EMAIL }}
+          password: ${{ secrets.NOTIFY_EMAIL_APP_PASSWORD }}
+          to: harshitspeaks@gmail.com
+          from: harshitspeaks@gmail.com
+          subject: "✅ Daily portfolio sync complete"
+          body: "file://sync_output.txt"
 
       - name: Send failure email
         if: failure()
@@ -49,9 +62,7 @@ jobs:
           password: ${{ secrets.NOTIFY_EMAIL_APP_PASSWORD }}
           to: harshitspeaks@gmail.com
           from: harshitspeaks@gmail.com
-          subject: "❌ zerodha-monarch-sync failed"
+          subject: "❌ Daily portfolio sync failed"
           body: |
-            The Zerodha → Monarch Money sync failed.
-
-            Check the workflow run for details:
-            https://github.com/harshitbshah/zerodha-monarch-sync/actions
+            The portfolio sync failed. Check the workflow run for details:
+            https://github.com/harshitbshah/portfolio-sync/actions
