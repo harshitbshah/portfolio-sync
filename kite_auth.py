@@ -4,12 +4,12 @@
 Writes the access_token to GITHUB_OUTPUT for downstream workflow steps.
 
 Login flow:
-  1. GET kite.trade/connect/login  → follows redirects to zerodha login page;
-                                     captures final URL which contains sess_id
+  1. GET kite.trade/connect/login  → follows redirects; captures final URL (has sess_id)
   2. POST /api/login               → Zerodha credentials → get request_id
-  3. POST /api/twofa               → TOTP; sets enctoken/user_id cookies
-  4. GET <step-1-url>&skip_session=true  → server skips consent page;
-                                     follows redirects to redirect_url?request_token=…
+  3. POST /api/twofa               → TOTP + skip_session=True; tells server to skip
+                                     the OAuth consent page for this session
+  4. GET kite.trade/connect/login  → with authenticated cookies + skip_session set,
+                                     server redirects to redirect_url?request_token=…
   5. POST api.kite.trade/session/token  → exchange request_token for access_token
 """
 
@@ -47,51 +47,32 @@ def login() -> str:
         raise RuntimeError(f"Login failed: {payload.get('message')}")
     request_id = payload["data"]["request_id"]
 
-    # Step 3: submit TOTP — sets enctoken + user_id cookies on the session
+    # Step 3: submit TOTP — skip_session=True tells Zerodha to skip the OAuth
+    # consent page for this session, so step 4 can go directly to redirect_url
     r = s.post(
         "https://kite.zerodha.com/api/twofa",
         data={
-            "user_id":     user_id,
-            "request_id":  request_id,
-            "twofa_value": pyotp.TOTP(totp_key).now(),
-            "twofa_type":  "totp",
+            "user_id":        user_id,
+            "request_id":     request_id,
+            "twofa_value":    pyotp.TOTP(totp_key).now(),
+            "twofa_type":     "totp",
+            "skip_session":   True,
         },
         allow_redirects=False,
         timeout=15,
     )
     r.raise_for_status()
 
-    # Step 4: re-hit the original login URL with skip_session=true.
-    # This tells Zerodha to bypass the consent UI and immediately redirect to
-    # the app's redirect_url with request_token.
-    skip_url = login_url + ("&" if "?" in login_url else "?") + "skip_session=true"
+    # Step 4: re-hit the connect login URL; with authenticated cookies and
+    # skip_session set during twofa, server redirects to redirect_url?request_token=…
     request_token = None
-    # Try several approaches to bypass/complete the consent step
-    base = "https://kite.zerodha.com"
-    sess_id = parse_qs(urlparse(login_url).query).get("sess_id", [None])[0] or ""
-    attempts = [
-        skip_url,  # original URL + skip_session=true
-        f"{base}/connect/authorize?api_key={api_key}&sess_id={sess_id}&skip_session=true",
-        f"{base}/connect/finish?api_key={api_key}&sess_id={sess_id}",
-        f"{base}/connect/authorize?api_key={api_key}&sess_id={sess_id}&action=allow",
-        f"{base}/connect/authorize?api_key={api_key}&sess_id={sess_id}&skip_session=1",
-    ]
-
-    for attempt_url in attempts:
-        try:
-            resp = s.get(attempt_url, allow_redirects=True, timeout=15)
-            rt = parse_qs(urlparse(resp.url).query).get("request_token", [None])[0]
-            print(f"  GET {attempt_url.replace(api_key, '***').replace(sess_id, '***')} → {resp.status_code} url={resp.url.replace(api_key, '***').replace(sess_id, '***')!r} rt={rt!r}")
-            if rt:
-                request_token = rt
-                break
-        except requests.exceptions.ConnectionError as e:
-            err_url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
-            rt = parse_qs(urlparse(err_url).query).get("request_token", [None])[0]
-            print(f"  GET {attempt_url.replace(api_key, '***')} → ConnErr rt={rt!r}")
-            if rt:
-                request_token = rt
-                break
+    try:
+        final_r = s.get(connect_url, allow_redirects=True, timeout=15)
+        request_token = parse_qs(urlparse(final_r.url).query).get("request_token", [None])[0]
+    except requests.exceptions.ConnectionError as e:
+        # Redirect ended at 127.0.0.1 (refused) — extract token from failed URL
+        err_url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
+        request_token = parse_qs(urlparse(err_url).query).get("request_token", [None])[0]
 
     if not request_token:
         raise RuntimeError("Could not extract request_token from redirect chain.")

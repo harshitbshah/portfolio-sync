@@ -21,15 +21,15 @@ def _mock_session(request_token="rt_test", access_token="at_final"):
     """Pre-wired mock session for the happy-path login flow."""
     s = MagicMock()
 
-    # Step 1: init GET lands on the zerodha login URL with sess_id
+    # Step 1: init GET (connect_url) — returns a response with a URL containing sess_id
     init_r = MagicMock()
     init_r.url = _LOGIN_URL
 
-    # Step 4: skip_session GET redirects directly to redirect_url with request_token
-    skip_r = MagicMock()
-    skip_r.url = f"https://127.0.0.1/?request_token={request_token}&status=success"
+    # Step 4: GET connect_url again — redirects to redirect_url with request_token
+    final_r = MagicMock()
+    final_r.url = f"https://127.0.0.1/?request_token={request_token}&status=success"
 
-    s.get.side_effect = [init_r, skip_r]
+    s.get.side_effect = [init_r, final_r]
 
     login_r = MagicMock()
     login_r.json.return_value = {"status": "success", "data": {"request_id": "req_id"}}
@@ -54,8 +54,8 @@ class TestLogin:
             mock_totp.return_value.now.return_value = "123456"
             assert kite_auth.login() == "the_token"
 
-    def test_skip_session_url_uses_original_sess_id(self):
-        """skip_session=true must be appended to the captured login URL (with sess_id)."""
+    def test_skip_session_sent_in_twofa_payload(self):
+        """skip_session=True must be included in the twofa POST data."""
         s = _mock_session()
         with patch("kite_auth.requests.Session", return_value=s), \
              patch("kite_auth.pyotp.TOTP") as mock_totp, \
@@ -63,10 +63,8 @@ class TestLogin:
             mock_totp.return_value.now.return_value = "123456"
             kite_auth.login()
 
-        skip_call = s.get.call_args_list[1]
-        called_url = skip_call[0][0]
-        assert "sess_id=SESS123" in called_url
-        assert "skip_session=true" in called_url
+        twofa_call = s.post.call_args_list[1]
+        assert twofa_call[1]["data"]["skip_session"] is True
 
     def test_totp_value_sent_in_twofa_call(self):
         s = _mock_session()
