@@ -181,9 +181,9 @@ class TestLogin:
             mock_totp.return_value.now.return_value = "123456"
             assert kite_auth.login() == "at_auth"
 
-        # Verify the POST was made to the authorize URL with sess_id
+        # Verify the POST was made to the correct authorize API with sess_id
         authorize_call = s.post.call_args_list[2]
-        assert authorize_call[0][0] == "https://kite.zerodha.com/connect/authorize?api_key=test_api_key&sess_id=SID123"
+        assert authorize_call[0][0] == "https://kite.zerodha.com/api/connect/app/authorize"
         assert authorize_call[1]["data"]["sess_id"] == "SID123"
 
     def test_session_generation_failure_raises(self):

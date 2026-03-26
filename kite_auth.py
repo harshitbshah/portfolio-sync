@@ -93,28 +93,25 @@ def login() -> str:
             request_token = final_params.get("request_token", [None])[0]
 
             if not request_token and "sess_id" in final_params:
-                # Landed on the OAuth consent page — find and call the authorization API
+                # Landed on the OAuth consent page — POST to /api/connect/app/authorize
                 sess_id = final_params["sess_id"][0]
-                print(f"  authorize consent page — inspecting page for API endpoint")
-                import re as _re
-                auth_page = s.get(authorize_url, timeout=15)
-                # Extract JS bundle URLs from script tags
-                scripts = _re.findall(r'<script[^>]+src="([^"]+)"', auth_page.text)
-                print(f"  authorize page scripts: {scripts}")
-                # Fetch all JS bundles and look for authorize/app_session patterns
-                for script_url in scripts:
-                    if not script_url.startswith("http"):
-                        script_url = "https://kite.zerodha.com" + script_url
-                    try:
-                        js = s.get(script_url, timeout=15)
-                        # Search for authorize-related context (50 chars around each match)
-                        for pat in [r'app_session', r'authorize', r'sess_id']:
-                            matches = [js.text[max(0,m.start()-30):m.end()+50]
-                                      for m in _re.finditer(pat, js.text)]
-                            if matches:
-                                print(f"  JS {script_url.split('/')[-1]} '{pat}' contexts: {matches[:3]}")
-                    except Exception as e:
-                        print(f"  JS fetch error: {e}")
+                print(f"  authorize consent page — calling /api/connect/app/authorize")
+                try:
+                    r = s.post(
+                        "https://kite.zerodha.com/api/connect/app/authorize",
+                        data={"sess_id": sess_id},
+                        allow_redirects=True,
+                        timeout=15,
+                    )
+                    print(f"  authorize API status: {r.status_code}, URL: {r.url!r}")
+                    request_token = parse_qs(urlparse(r.url).query).get("request_token", [None])[0]
+                    if not request_token:
+                        # Maybe the response body contains location or request_token
+                        print(f"  authorize API body: {r.text[:300]!r}")
+                except requests.exceptions.ConnectionError as e:
+                    url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
+                    print(f"  authorize API ConnectionError URL: {url!r}")
+                    request_token = parse_qs(urlparse(url).query).get("request_token", [None])[0]
         except requests.exceptions.ConnectionError as e:
             # Redirect chain ended at 127.0.0.1 — extract from the failed request URL
             url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
