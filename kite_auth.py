@@ -50,7 +50,10 @@ def login() -> str:
     s = requests.Session()
 
     # Step 1: initialise Kite Connect OAuth session (sets app-context cookies)
+    # The final URL contains the sess_id we must reuse in step 4
     init_r = s.get(connect_url, timeout=15)
+    init_params = parse_qs(urlparse(init_r.url).query)
+    original_sess_id = init_params.get("sess_id", [None])[0]
     print(f"  step1 final URL: {init_r.url!r}")
 
     # Step 2: submit credentials
@@ -81,13 +84,15 @@ def login() -> str:
     print(f"  twofa status: {r.status_code}")
 
     # Step 4: re-hit the Kite Connect login URL with now-authenticated session.
-    # Kite detects the active session and redirects to redirect_url?request_token=…
+    # IMPORTANT: reuse the original sess_id URL from step 1 — hitting connect_url creates a new session.
     request_token = _extract_request_token(r, s, api_key)
 
     if not request_token:
         print("  twofa gave no redirect — re-triggering Kite Connect OAuth...")
+        retrigger_url = init_r.url if original_sess_id else connect_url
+        print(f"  re-trigger URL: {retrigger_url!r}")
         try:
-            r = s.get(connect_url, allow_redirects=True, timeout=15)
+            r = s.get(retrigger_url, allow_redirects=True, timeout=15)
             authorize_url = r.url
             print(f"  connect re-hit final URL: {authorize_url!r}")
             final_params = parse_qs(urlparse(authorize_url).query)
