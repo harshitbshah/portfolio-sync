@@ -149,14 +149,13 @@ class TestBuildSubject:
         base.update(kw)
         return base
 
-    def test_no_changes(self):
+    def test_includes_total(self):
         subj = fe.build_subject(self._d())
-        assert "no changes" in subj
         assert "$786,962.00" in subj
 
-    def test_has_changes_no_no_changes_suffix(self):
-        subj = fe.build_subject(self._d(indian_diffs=[("FEDFINA", "+500")]))
-        assert "no changes" not in subj
+    def test_never_has_no_changes_suffix(self):
+        assert "no changes" not in fe.build_subject(self._d())
+        assert "no changes" not in fe.build_subject(self._d(indian_diffs=[("FEDFINA", "+500")]))
 
     def test_warning_emoji_when_warnings_present(self):
         subj = fe.build_subject(self._d(warnings=["WARNING: something"]))

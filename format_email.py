@@ -99,12 +99,8 @@ def build_html(data: dict) -> str:
     import datetime
     date_str = datetime.date.today().strftime("%a, %b %-d")
 
-    has_changes = any([
-        data["indian_diffs"], data["indian_closed"], data["indian_new"],
-        data["us_closed"], data["us_new"],
-    ])
     emoji = "⚠️" if data["warnings"] else "✅"
-    no_changes_label = " · no changes" if (not has_changes and not data["warnings"]) else ""
+    no_changes_label = ""
 
     # Warning banner
     warning_html = ""
@@ -190,12 +186,7 @@ def build_html(data: dict) -> str:
 def build_subject(data: dict) -> str:
     emoji = "⚠️" if data["warnings"] else "✅"
     total = data["total"] or ""
-    has_changes = any([
-        data["indian_diffs"], data["indian_closed"], data["indian_new"],
-        data["us_closed"], data["us_new"],
-    ])
-    suffix = " | no changes" if (not has_changes and not data["warnings"]) else ""
-    return f"{emoji} Portfolio sync | {total}{suffix}"
+    return f"{emoji} Portfolio sync | {total}"
 
 
 if __name__ == "__main__":
