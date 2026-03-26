@@ -18,13 +18,31 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install google-auth google-auth-httplib2 google-api-python-client
+        run: pip install google-auth google-auth-httplib2 google-api-python-client pyotp requests
 
       - name: Initialize log with run header
         run: |
           echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" > sync_output.txt
           echo "─────────────────────────────────────────" >> sync_output.txt
           echo "" >> sync_output.txt
+
+      - name: Generate Kite access token
+        id: kite_auth
+        env:
+          KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
+          KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
+          ZERODHA_USER_ID: ${{ secrets.ZERODHA_USER_ID }}
+          ZERODHA_PASSWORD: ${{ secrets.ZERODHA_PASSWORD }}
+          ZERODHA_TOTP_KEY: ${{ secrets.ZERODHA_TOTP_KEY }}
+        run: python kite_auth.py
+
+      - name: Sync Indian Portfolio → Google Sheet
+        env:
+          KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
+          KITE_ACCESS_TOKEN: ${{ steps.kite_auth.outputs.access_token }}
+          GSHEET_SERVICE_ACCOUNT_JSON: ${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}
+          GSHEET_SHEET_ID: ${{ vars.GSHEET_SHEET_ID }}
+        run: python sync_indian_portfolio.py 2>&1 | tee -a sync_output.txt
 
       - name: Sync Zerodha → Monarch + PF Summary sheet
         env:
