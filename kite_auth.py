@@ -71,8 +71,19 @@ def login() -> str:
     def _extract_token(url):
         return parse_qs(urlparse(url).query).get("request_token", [None])[0]
 
+    def _try_finish_post(finish_url):
+        """POST to /connect/finish — some OAuth flows confirm via POST, not GET."""
+        try:
+            r = s.post(finish_url, allow_redirects=False, timeout=15)
+            loc = r.headers.get("Location", "")
+            print(f"  POST finish → {r.status_code} Location={loc!r}")
+            return _extract_token(loc) or _extract_token(r.url)
+        except requests.exceptions.ConnectionError as e:
+            err_url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
+            return _extract_token(err_url)
+
     def _follow_chain(start_url):
-        """Follow up to 3 hops manually; return request_token or None."""
+        """Follow up to 3 GET hops; when we hit /connect/finish also try POSTing it."""
         url = start_url
         for hop in range(3):
             try:
@@ -84,9 +95,14 @@ def login() -> str:
                     if token:
                         return token
                 if r.status_code == 302 and loc:
+                    # If next hop is the consent page, try POSTing to finish instead
+                    if "/connect/authorize" in loc and "/connect/finish" in url:
+                        token = _try_finish_post(url)
+                        if token:
+                            return token
                     url = loc
                 else:
-                    return None  # no redirect and no token
+                    return None
             except requests.exceptions.ConnectionError as e:
                 err_url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
                 print(f"  hop{hop} ConnErr url={err_url!r}")
