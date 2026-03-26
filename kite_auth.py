@@ -83,9 +83,15 @@ def login() -> str:
 
     if not request_token:
         print("  twofa gave no redirect — re-triggering Kite Connect OAuth...")
-        r = s.get(connect_url, allow_redirects=False, timeout=15)
-        print(f"  connect re-hit status: {r.status_code}, location: {r.headers.get('Location', '')!r}")
-        request_token = _extract_request_token(r, s, api_key)
+        try:
+            r = s.get(connect_url, allow_redirects=True, timeout=15)
+            print(f"  connect re-hit final URL: {r.url!r}")
+            request_token = parse_qs(urlparse(r.url).query).get("request_token", [None])[0]
+        except requests.exceptions.ConnectionError as e:
+            # Redirect chain ended at 127.0.0.1 — extract from the failed request URL
+            url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
+            print(f"  ConnectionError URL: {url!r}")
+            request_token = parse_qs(urlparse(url).query).get("request_token", [None])[0]
 
     if not request_token:
         raise RuntimeError(
