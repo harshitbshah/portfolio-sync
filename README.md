@@ -6,11 +6,19 @@ Daily automation that keeps a personal Google Sheet portfolio tracker in sync wi
 
 Two scripts run in sequence each weekday:
 
-### 1. `sync.py` — Zerodha + Monarch balances → PF Summary sheet
+### 1. `sync_indian_portfolio.py` — Zerodha holdings → Indian Portfolio sheet
+
+- Fetches all settled DEMAT holdings from Zerodha (via enctoken auth)
+- **Updates** Column C (Quantity) for all tickers already in the *Indian Portfolio* tab
+- **Removes** rows for tickers no longer held in Zerodha (closed positions)
+- **Inserts** new rows for tickers in Zerodha not yet in the sheet — Theme is left blank for manual entry
+
+### 2. `sync.py` — Zerodha + Monarch balances → PF Summary sheet
 
 - Reads the **Indian PF** USD balance from the *PF Summary* tab and updates the manual Zerodha account in **Monarch Money**
 - Reads all US brokerage account balances from Monarch and writes them back to the *PF Summary* tab (bank accounts, CDs, etc.)
 - Tracks the total SGOV share count across all brokerage accounts
+- Reads the **PF Breakdown** table from the sheet and emits a parseable summary line for the email
 
 ### 2. `sync_us_portfolio.py` — Monarch holdings → US Portfolio sheet
 
@@ -25,19 +33,18 @@ The Holdings column (E) auto-recalculates via `GOOGLEFINANCE` formulas once quan
 ## Architecture
 
 ```
-Google Sheets (Indian PF balance)     Monarch Money (brokerage-linked)
-              │                                   │
-              ▼                                   ▼
-          sync.py                    sync_us_portfolio.py
-              │                                   │
-     ┌────────┴────────┐              ┌───────────┴───────────┐
-     ▼                 ▼              ▼           ▼           ▼
-Update Zerodha   Write account    Update qty  Remove closed  Add new
-in Monarch       balances + SGOV  for tickers  positions    positions
-                       │                                   │
-                       └──────────────┬────────────────────┘
-                                      ▼
-                         Google Sheets (Personal tracker)
+Zerodha (enctoken)    Google Sheets (Indian PF balance)    Monarch Money (brokerage-linked)
+        │                           │                                   │
+        ▼                           ▼                                   ▼
+sync_indian_portfolio.py        sync.py                  sync_us_portfolio.py
+        │                    ┌──────┴──────┐              ┌─────────────┴─────────────┐
+        ▼                    ▼             ▼              ▼             ▼             ▼
+ Update Indian         Update Zerodha  Write account  Update qty  Remove closed  Add new
+ Portfolio tab         in Monarch      balances+SGOV  for tickers  positions    positions
+                                            │                                   │
+                                            └───────────────┬───────────────────┘
+                                                            ▼
+                                              Google Sheets (Personal tracker)
 ```
 
 ## Sheet structure
@@ -47,9 +54,39 @@ in Monarch       balances + SGOV  for tickers  positions    positions
 | PF Summary | `sync.py` | Net worth overview — bank, CDs, bonds, Indian + US PF totals |
 | US Portfolio | `sync_us_portfolio.py` | US equity positions with Theme, Quantity, Holdings, Conviction |
 | US PF P&L | Manual | Realized gains by year; performance vs SPY/QQQ |
-| Indian Portfolio | Manual | Indian equity holdings (INR) |
+| Indian Portfolio | `sync_indian_portfolio.py` | Indian equity holdings — Zerodha quantities synced daily |
 | Indian PF P&L | Manual | Realized gains by Indian FY |
 | Subscriptions | Manual | Recurring subscription tracker |
+
+### Cells read by `sync.py` (PF Summary tab)
+
+| What | How located | Used for |
+|------|------------|----------|
+| Indian PF balance | Row where col A/B = `GSHEET_LABEL` (default `Indian PF`), value in next column | Push to Monarch as Zerodha balance |
+| Account balance rows | Col A = `sheet_category`, Col B = `sheet_institution` from `ACCOUNTS_JSON` | Pull from Monarch and write to Col C |
+| SGOV quantity cell | Cell immediately to the right of `SGOV_LABEL` (default `Total:`) | Write total SGOV share count |
+| PF Breakdown table | Rows below `PF_BREAKDOWN_LABEL` header (default `PF Breakdown`); label \| amount \| pct | Email summary — Indian PF / US PF / Total with allocation % |
+
+### Cells read by `sync_indian_portfolio.py` (Indian Portfolio tab)
+
+| What | Range | Used for |
+|------|-------|----------|
+| All ticker rows | `B:C` (ticker + quantity), starting row 2 | Diff against Zerodha holdings |
+
+### Cells written by `sync_indian_portfolio.py` (Indian Portfolio tab)
+
+| What | Column | Notes |
+|------|--------|-------|
+| Quantity | C | Updated for all existing positions |
+| New rows | A–C | Inserted at end; Theme (col A) left blank |
+| Closed rows | — | Entire row deleted |
+
+### Cells written by `sync.py` (PF Summary tab)
+
+| What | Column | Notes |
+|------|--------|-------|
+| Account balances | C | One row per `ACCOUNTS_JSON` entry, matched by category + institution |
+| SGOV quantity | Right of `SGOV_LABEL` | Share count, not dollar value |
 
 ## Setup
 
@@ -103,6 +140,9 @@ print(s['token'])
 | `GSHEET_SERVICE_ACCOUNT_JSON` | Full contents of the service account JSON key |
 | `NOTIFY_EMAIL` | Gmail address to send failure alerts from/to |
 | `NOTIFY_EMAIL_APP_PASSWORD` | Gmail App Password — create at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) |
+| `ZERODHA_USER_ID` | Zerodha login user ID |
+| `ZERODHA_PASSWORD` | Zerodha login password |
+| `ZERODHA_TOTP_KEY` | Base32 TOTP secret from Zerodha 2FA setup (used by `pyotp`) |
 
 ### GitHub Variables
 
@@ -114,6 +154,7 @@ print(s['token'])
 | `MONARCH_ACCOUNT_NAME` | `Zerodha` | Monarch display name of the manual Zerodha account |
 | `ACCOUNTS_JSON` | *(see below)* | Maps Monarch accounts to PF Summary rows |
 | `SGOV_LABEL` | `Total:` | Label to locate the SGOV quantity cell in PF Summary |
+| `PF_BREAKDOWN_LABEL` | `PF Breakdown` | Header label that marks the portfolio breakdown table in PF Summary |
 
 `ACCOUNTS_JSON` maps each brokerage account to a row in the PF Summary tab:
 ```json

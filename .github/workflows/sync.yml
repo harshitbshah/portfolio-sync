@@ -54,6 +54,7 @@ jobs:
           MONARCH_ACCOUNT_NAME: ${{ vars.MONARCH_ACCOUNT_NAME }}
           ACCOUNTS_JSON: ${{ vars.ACCOUNTS_JSON }}
           SGOV_LABEL: ${{ vars.SGOV_LABEL }}
+          PF_BREAKDOWN_LABEL: ${{ vars.PF_BREAKDOWN_LABEL }}
         run: python sync.py 2>&1 | tee -a sync_output.txt
 
       - name: Sync Monarch holdings → US Portfolio sheet
@@ -79,7 +80,7 @@ jobs:
           to: harshitspeaks@gmail.com
           from: harshitspeaks@gmail.com
           subject: ${{ steps.format.outputs.subject }}
-          body: "file://email_body.txt"
+          html_body: "file://email_body.html"
 
       - name: Send failure email
         if: failure()

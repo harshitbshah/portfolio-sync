@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parse sync_output.txt, write email_body.txt and subject to GITHUB_OUTPUT."""
+"""Parse sync_output.txt and write an HTML email + subject to GITHUB_OUTPUT."""
 
 import os
 import re
@@ -7,94 +7,195 @@ import re
 
 def parse(text: str) -> dict:
     data = {
-        "run_url": None,
-        "zerodha_balance": None,
-        "us_added": [],   # list of (ticker, qty_str)
-        "us_removed": [], # list of ticker
-        "us_updated": 0,
-        "warnings": [],
+        "run_url":       None,
+        "indian_pf":     None,   # "$234,629.00"
+        "indian_pct":    None,   # "29.81%"
+        "us_pf":         None,   # "$552,332.00"
+        "us_pct":        None,   # "70.19%"
+        "total":         None,   # "$786,962.00"
+        "indian_diffs":  [],     # [("FEDFINA", "+500")]
+        "indian_closed": [],     # ["WINDLAS"]
+        "indian_new":    [],     # [("GPIL", "5804")]
+        "us_closed":     [],     # ["ZS"]
+        "us_new":        [],     # [("RKLB", "460.87")]
+        "warnings":      [],
     }
 
     for line in text.splitlines():
-        if line.startswith("Run: http"):
-            data["run_url"] = line[5:].strip()
+        line_s = line.strip()
 
-        # "Updated: Zerodha → $234,794.88"
-        m = re.match(r"Updated: .+ → \$([0-9,]+\.\d+)", line.strip())
+        if line_s.startswith("Run: http"):
+            data["run_url"] = line_s[5:].strip()
+
+        # PF Summary: Indian PF $234,629.00 29.81% | US PF $552,332.00 70.19% | Total $786,962.00
+        if line_s.startswith("PF Summary:"):
+            for part in line_s[len("PF Summary:"):].strip().split("|"):
+                part = part.strip()
+                m = re.match(r"Indian PF \$([0-9,]+\.\d+) ([0-9.]+%)", part)
+                if m:
+                    data["indian_pf"]  = f"${m.group(1)}"
+                    data["indian_pct"] = m.group(2)
+                m = re.match(r"US PF \$([0-9,]+\.\d+) ([0-9.]+%)", part)
+                if m:
+                    data["us_pf"]  = f"${m.group(1)}"
+                    data["us_pct"] = m.group(2)
+                m = re.match(r"Total \$([0-9,]+\.\d+)", part)
+                if m:
+                    data["total"] = f"${m.group(1)}"
+
+        # [Indian] Diff: FEDFINA +500
+        m = re.match(r"\[Indian\] Diff: (\S+) ([+-]\d+)", line_s)
         if m:
-            data["zerodha_balance"] = m.group(1)
+            sign = "+" if m.group(2).startswith("+") else "−"
+            data["indian_diffs"].append((m.group(1), f"{sign}{m.group(2).lstrip('+-')}"))
 
-        # "  NVDA   : 92.3431 shares (Theme/Conviction: fill manually)"
-        m = re.match(r"\s+(\w+)\s*: ([0-9,]+\.\d+) shares \(Theme", line)
+        # [Indian] Closed: WINDLAS
+        m = re.match(r"\[Indian\] Closed: (\S+)", line_s)
         if m:
-            data["us_added"].append((m.group(1), m.group(2)))
+            data["indian_closed"].append(m.group(1))
 
-        # "Removing N closed positions: ['XYZ', ...]"
-        m = re.match(r"Removing \d+ closed positions: \[(.+)\]", line)
+        # [Indian] Added: GPIL +5804
+        m = re.match(r"\[Indian\] Added: (\S+) \+(\S+)", line_s)
         if m:
-            data["us_removed"] = [t.strip().strip("'") for t in m.group(1).split(",")]
+            data["indian_new"].append((m.group(1), m.group(2)))
 
-        # "Done. Updated 30, removed 0, added 0."
-        m = re.match(r"Done\. Updated (\d+), removed \d+, added \d+\.", line)
+        # Removing N closed positions: ['ZS', ...]
+        m = re.match(r"Removing \d+ closed positions: \[(.+)\]", line_s)
         if m:
-            data["us_updated"] = int(m.group(1))
+            data["us_closed"] = [t.strip().strip("'") for t in m.group(1).split(",")]
 
-        # Warnings from our scripts only (skip Node/pip noise)
-        if re.search(r"^\s*(WARNING|ERROR):", line):
-            data["warnings"].append(line.strip())
+        #   NVDA  : 92.3431 shares (Theme/Conviction: fill manually)
+        m = re.match(r"(\w+)\s*:\s*([0-9,]+\.\d+) shares \(Theme", line_s)
+        if m:
+            data["us_new"].append((m.group(1), m.group(2)))
+
+        if re.match(r"(WARNING|ERROR):", line_s):
+            data["warnings"].append(line_s)
 
     return data
 
 
+def _pill(label, color, bg):
+    return (f'<span style="background:{bg};color:{color};font-size:11px;'
+            f'padding:2px 7px;border-radius:4px;font-weight:600;">{label}</span>')
+
+
+def _change_row(ticker, value_html):
+    return (f'\n      <tr>'
+            f'<td style="padding:4px 0;font-family:monospace;font-size:13px;width:55%;">{ticker}</td>'
+            f'<td style="padding:4px 0;font-size:13px;text-align:right;">{value_html}</td>'
+            f'</tr>')
+
+
+def _changes_section(title, rows_html):
+    return (f'\n    <div style="padding:0 24px 20px;">'
+            f'\n      <div style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;'
+            f'margin-bottom:12px;border-top:1px solid #f0f0f0;padding-top:16px;">{title}</div>'
+            f'\n      <table style="width:100%;border-collapse:collapse;">{rows_html}\n      </table>'
+            f'\n    </div>')
+
+
+def build_html(data: dict) -> str:
+    import datetime
+    date_str = datetime.date.today().strftime("%a, %b %-d")
+
+    has_changes = any([
+        data["indian_diffs"], data["indian_closed"], data["indian_new"],
+        data["us_closed"], data["us_new"],
+    ])
+    emoji = "⚠️" if data["warnings"] else "✅"
+    no_changes_label = " · no changes" if (not has_changes and not data["warnings"]) else ""
+
+    # Warning banner
+    warning_html = ""
+    if data["warnings"]:
+        msgs = "<br>".join(f"⚠ {w}" for w in data["warnings"])
+        warning_html = (f'\n    <div style="padding:14px 24px;background:#fffbeb;border-bottom:1px solid #fde68a;">'
+                        f'\n      <span style="font-size:13px;color:#92400e;">{msgs}</span>'
+                        f'\n    </div>')
+
+    # Summary table
+    indian_pf  = data["indian_pf"]  or "—"
+    indian_pct = data["indian_pct"] or ""
+    us_pf      = data["us_pf"]      or "—"
+    us_pct     = data["us_pct"]     or ""
+    total      = data["total"]      or "—"
+
+    summary_html = f"""
+    <div style="padding:20px 24px;">
+      <table style="width:100%;border-collapse:collapse;">
+        <tr>
+          <td style="padding:6px 0;color:#555;">Indian PF</td>
+          <td style="padding:6px 0;text-align:right;font-weight:500;">{indian_pf}</td>
+          <td style="padding:6px 0;text-align:right;color:#aaa;font-size:13px;padding-left:16px;">{indian_pct}</td>
+        </tr>
+        <tr>
+          <td style="padding:6px 0;color:#555;">US PF</td>
+          <td style="padding:6px 0;text-align:right;font-weight:500;">{us_pf}</td>
+          <td style="padding:6px 0;text-align:right;color:#aaa;font-size:13px;padding-left:16px;">{us_pct}</td>
+        </tr>
+        <tr style="border-top:1px solid #eee;">
+          <td style="padding:10px 0 4px;font-weight:600;">Total</td>
+          <td style="padding:10px 0 4px;text-align:right;font-weight:600;font-size:16px;">{total}</td>
+          <td></td>
+        </tr>
+      </table>
+    </div>"""
+
+    # Indian PF changes
+    indian_rows = ""
+    for ticker, diff in data["indian_diffs"]:
+        color = "#16a34a" if diff.startswith("+") else "#dc2626"
+        indian_rows += _change_row(ticker, f'<span style="color:{color};font-weight:600;">{diff}</span>')
+    for ticker in data["indian_closed"]:
+        indian_rows += _change_row(ticker, _pill("exited", "#dc2626", "#fee2e2"))
+    for ticker, qty in data["indian_new"]:
+        val = _pill("new", "#16a34a", "#dcfce7") + f' <span style="color:#555;font-size:12px;">{qty} shares</span>'
+        indian_rows += _change_row(ticker, val)
+    indian_section = _changes_section("Indian PF changes", indian_rows) if indian_rows else ""
+
+    # US PF changes
+    us_rows = ""
+    for ticker in data["us_closed"]:
+        us_rows += _change_row(ticker, _pill("exited", "#dc2626", "#fee2e2"))
+    for ticker, qty in data["us_new"]:
+        val = _pill("new", "#16a34a", "#dcfce7") + f' <span style="color:#555;font-size:12px;">{qty} shares</span>'
+        us_rows += _change_row(ticker, val)
+    us_section = _changes_section("US PF changes", us_rows) if us_rows else ""
+
+    # Footer
+    footer_html = ""
+    if data["run_url"]:
+        footer_html = (f'\n    <div style="padding:12px 24px;border-top:1px solid #f0f0f0;">'
+                       f'\n      <a href="{data["run_url"]}" style="color:#aaa;font-size:12px;text-decoration:none;">view run →</a>'
+                       f'\n    </div>')
+
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;color:#1a1a1a;">
+<div style="max-width:520px;margin:32px auto;padding:0 16px;">
+  <div style="background:#fff;border-radius:8px;overflow:hidden;">
+    <div style="padding:20px 24px 16px;border-bottom:1px solid #f0f0f0;">
+      <span style="font-size:18px;font-weight:600;">{emoji} Portfolio sync</span>
+      <span style="color:#888;margin-left:8px;font-size:13px;">{date_str}{no_changes_label}</span>
+    </div>{warning_html}{summary_html}{indian_section}{us_section}{footer_html}
+  </div>
+  <p style="text-align:center;color:#ccc;font-size:11px;margin-top:16px;">portfolio-sync · GitHub Actions</p>
+</div>
+</body>
+</html>"""
+
+
 def build_subject(data: dict) -> str:
     emoji = "⚠️" if data["warnings"] else "✅"
-    balance = f"${data['zerodha_balance']}" if data["zerodha_balance"] else ""
-
-    changes = []
-    for t, _ in data["us_added"]:
-        changes.append(f"+{t}")
-    for t in data["us_removed"]:
-        changes.append(f"−{t}")
-
-    if changes:
-        change_str = ", ".join(changes)
-        return f"{emoji} Portfolio sync | {balance} | {change_str}"
-    else:
-        return f"{emoji} Portfolio sync | {balance} | no changes"
-
-
-def build_body(data: dict) -> str:
-    lines = []
-
-    if data["warnings"]:
-        lines += ["WARNINGS"]
-        for w in data["warnings"]:
-            lines.append(f"  {w}")
-        lines.append("")
-
-    if data["zerodha_balance"]:
-        lines.append(f"Zerodha synced: ${data['zerodha_balance']}")
-
-    has_changes = data["us_removed"] or data["us_added"]
-
-    if has_changes:
-        lines.append("")
-        lines.append("US Portfolio changes:")
-        if data["us_removed"]:
-            lines.append(f"  Closed:  {', '.join(data['us_removed'])}")
-        if data["us_added"]:
-            lines.append(f"  New:     {', '.join(t for t, _ in data['us_added'])}")
-            for ticker, qty in data["us_added"]:
-                lines.append(f"           {ticker}: {qty} shares")
-            lines.append("  → fill Theme/Conviction for new positions")
-    else:
-        n = data["us_updated"]
-        lines.append(f"US Portfolio: {n} position{'s' if n != 1 else ''}, no changes")
-
-    if data["run_url"]:
-        lines += ["", f"── view run: {data['run_url']}"]
-
-    return "\n".join(lines) + "\n"
+    total = data["total"] or ""
+    has_changes = any([
+        data["indian_diffs"], data["indian_closed"], data["indian_new"],
+        data["us_closed"], data["us_new"],
+    ])
+    suffix = " | no changes" if (not has_changes and not data["warnings"]) else ""
+    return f"{emoji} Portfolio sync | {total}{suffix}"
 
 
 if __name__ == "__main__":
@@ -103,16 +204,14 @@ if __name__ == "__main__":
 
     data = parse(text)
     subject = build_subject(data)
-    body = build_body(data)
+    html = build_html(data)
 
-    with open("email_body.txt", "w") as f:
-        f.write(body)
+    with open("email_body.html", "w") as f:
+        f.write(html)
 
-    # Write subject to GITHUB_OUTPUT for the workflow to pick up
     gh_output = os.environ.get("GITHUB_OUTPUT", "")
     if gh_output:
         with open(gh_output, "a") as f:
             f.write(f"subject={subject}\n")
 
-    print(f"Subject: {subject}\n")
-    print(body, end="")
+    print(f"Subject: {subject}")

@@ -35,6 +35,7 @@ SHEET_ACCOUNTS = json.loads(os.getenv("ACCOUNTS_JSON", json.dumps([
 # Label to search for in the sheet to locate the SGOV quantity cell.
 # The value is written to the cell immediately to the right of this label.
 SGOV_LABEL = os.getenv("SGOV_LABEL", "Total:")
+PF_BREAKDOWN_LABEL = os.getenv("PF_BREAKDOWN_LABEL", "PF Breakdown")
 
 
 # ── Google Sheets helpers ─────────────────────────────────────────────────────
@@ -311,6 +312,50 @@ def update_google_sheet(balances: dict[int, float], sgov_total: float) -> None:
     ).execute()
 
 
+# ── Step 5: Read PF Breakdown summary table ───────────────────────────────────
+def print_pf_summary() -> None:
+    """Find 'PF Breakdown' header dynamically and print a parseable summary line."""
+    rows = _read_sheet_rows()
+
+    # Find the header cell by label
+    header_row_idx = component_col = None
+    for row_idx, row in enumerate(rows):
+        for col_idx, cell in enumerate(row):
+            if isinstance(cell, str) and cell.strip() == PF_BREAKDOWN_LABEL:
+                header_row_idx, component_col = row_idx, col_idx
+                break
+        if header_row_idx is not None:
+            break
+
+    if header_row_idx is None:
+        print(f"  WARNING: '{PF_BREAKDOWN_LABEL}' header not found in sheet", file=sys.stderr)
+        return
+
+    # Read rows below header: label | amount | percentage
+    components = []
+    total = None
+    for row in rows[header_row_idx + 1:]:
+        if len(row) <= component_col:
+            continue
+        label = str(row[component_col]).strip() if row[component_col] else ""
+        amount_raw = row[component_col + 1] if len(row) > component_col + 1 else None
+        pct_raw    = row[component_col + 2] if len(row) > component_col + 2 else None
+
+        if amount_raw is None:
+            break
+        amount = float(re.sub(r"[^\d.]", "", str(amount_raw)))
+
+        if not label:
+            total = amount  # blank label = total row
+            break
+        if pct_raw is not None:
+            pct = float(pct_raw) * 100
+            components.append(f"{label} ${amount:,.2f} {pct:.2f}%")
+
+    parts = components + ([f"Total ${total:,.2f}"] if total else [])
+    print(f"PF Summary: {' | '.join(parts)}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     token = os.environ["MONARCH_TOKEN"]
@@ -333,5 +378,8 @@ if __name__ == "__main__":
 
     print("Writing to Google Sheets...")
     update_google_sheet(balances, sgov_total)
+
+    print("\nReading PF summary...")
+    print_pf_summary()
 
     print("\nDone.")
