@@ -96,23 +96,32 @@ def login() -> str:
                 # Landed on the OAuth consent page — POST to /api/connect/app/authorize
                 sess_id = final_params["sess_id"][0]
                 print(f"  authorize consent page — calling /api/connect/app/authorize")
-                import re as _re
-                # The connect-authorize Vue component is lazy-loaded in chunks 526 + 126
-                # Try fetching those chunks to find the actual API call
-                for chunk in ["526", "126"]:
-                    for ext in [".js", ".c752df4a.js"]:
-                        try:
-                            js_r = s.get(f"https://kite.zerodha.com/static/js/{chunk}{ext}", timeout=10)
-                            if js_r.status_code == 200:
-                                print(f"  chunk {chunk}{ext} size={len(js_r.text)}")
-                                for pat in ["authorize", "sess_id", "request_token", "connect"]:
-                                    for m in _re.finditer(pat, js_r.text):
-                                        ctx = js_r.text[max(0, m.start()-60):m.end()+100]
-                                        print(f"  chunk {chunk} '{pat}': {ctx!r}")
-                                        break
-                                break
-                        except Exception:
-                            pass
+                # Try candidate endpoints/methods until one works
+                base = "https://kite.zerodha.com"
+                candidates = [
+                    ("POST", f"{base}/api/connect/app/authorize", {"sess_id": sess_id}),
+                    ("POST", f"{base}/api/connect/app/authorize/{sess_id}", {}),
+                    ("POST", f"{base}/api/connect/session",           {"sess_id": sess_id}),
+                    ("GET",  f"{base}/api/connect/app/authorize",     {"sess_id": sess_id}),
+                    ("POST", f"https://kite.trade/api/connect/app/authorize", {"sess_id": sess_id}),
+                ]
+                for method, url, payload in candidates:
+                    try:
+                        resp = s.request(method, url, data=payload,
+                                         allow_redirects=True, timeout=15)
+                        rt = parse_qs(urlparse(resp.url).query).get("request_token", [None])[0]
+                        print(f"  {method} {url.split('kite')[1]} → {resp.status_code} url={resp.url!r} rt={rt!r} body={resp.text[:120]!r}")
+                        if rt:
+                            r = resp
+                            request_token = rt
+                            break
+                    except requests.exceptions.ConnectionError as ce:
+                        err_url = str(ce.request.url) if (hasattr(ce, "request") and ce.request) else ""
+                        rt = parse_qs(urlparse(err_url).query).get("request_token", [None])[0]
+                        print(f"  {method} {url.split('kite')[1]} → ConnErr url={err_url!r} rt={rt!r}")
+                        if rt:
+                            request_token = rt
+                            break
         except requests.exceptions.ConnectionError as e:
             # Redirect chain ended at 127.0.0.1 — extract from the failed request URL
             url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
