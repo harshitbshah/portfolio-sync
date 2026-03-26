@@ -100,7 +100,6 @@ def build_html(data: dict) -> str:
     date_str = datetime.date.today().strftime("%a, %b %-d")
 
     emoji = "⚠️" if data["warnings"] else "✅"
-    no_changes_label = ""
 
     # Warning banner
     warning_html = ""
@@ -174,7 +173,7 @@ def build_html(data: dict) -> str:
   <div style="background:#fff;border-radius:8px;overflow:hidden;">
     <div style="padding:20px 24px 16px;border-bottom:1px solid #f0f0f0;">
       <span style="font-size:18px;font-weight:600;">{emoji} Portfolio sync</span>
-      <span style="color:#888;margin-left:8px;font-size:13px;">{date_str}{no_changes_label}</span>
+      <span style="color:#888;margin-left:8px;font-size:13px;">{date_str}</span>
     </div>{warning_html}{summary_html}{indian_section}{us_section}{footer_html}
   </div>
   <p style="text-align:center;color:#ccc;font-size:11px;margin-top:16px;">portfolio-sync · GitHub Actions</p>
