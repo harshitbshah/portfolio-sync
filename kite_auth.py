@@ -112,28 +112,41 @@ def login() -> str:
                 chunk_map = dict(_re.findall(r'(\d+):"([a-f0-9]{8})"', idx_js.text))
                 print(f"  relevant chunks: 526→{chunk_map.get('526')}, 126→{chunk_map.get('126')}")
                 base = "https://kite.zerodha.com"
-                # Find Webpack chunk URL pattern in index.js
-                # Look for how chunks are loaded (e.g. "p+'/'+{526:'abc',126:'def'}[e]+'.js'")
-                wp_patterns = []
-                for pat in [r'static/js.{0,200}', r'\d+:.{1,50}\.js', r'chunkId.{0,100}js']:
-                    for m in _re.finditer(pat, idx_js.text):
-                        ctx = idx_js.text[max(0,m.start()-20):m.end()+20]
-                        wp_patterns.append(ctx[:120])
-                        break
-                print(f"  webpack chunk URL patterns: {wp_patterns}")
-                # Try 08797ac7 (hash for chunk 126) with several URL patterns
-                for url_pat in ["08797ac7.js", "126.08797ac7.js", "08797ac7.126.js",
-                                 "08797ac7.chunk.js", "chunk.08797ac7.js"]:
+                # Try all remaining undiscovered API endpoints
+                candidates = [
+                    # POST /api/user/app_sessions — "create app session" = authorize
+                    ("POST", f"{base}/api/user/app_sessions",
+                     {"sess_id": sess_id, "api_key": api_key}, None),
+                    # POST /api/session with sess_id
+                    ("POST", f"{base}/api/session",
+                     {"sess_id": sess_id, "api_key": api_key}, None),
+                    # GET /api/session to see what it returns
+                    ("GET",  f"{base}/api/session", None, {"sess_id": sess_id}),
+                    # POST to connect/authorize with JSON body (not form data)
+                    ("JSON_POST", f"{base}/api/connect/app/authorize",
+                     {"sess_id": sess_id, "api_key": api_key}, None),
+                ]
+                for method, url, body, params in candidates:
                     try:
-                        r2 = s.get(f"{base}/static/js/{url_pat}", timeout=5)
-                        print(f"  {url_pat}: {r2.status_code} size={len(r2.text)}")
-                        if r2.status_code == 200 and len(r2.text) > 100:
-                            for pat in ["authorize", "sess_id", "confirm"]:
-                                for m in _re.finditer(pat, r2.text):
-                                    print(f"  126 '{pat}': {r2.text[max(0,m.start()-50):m.end()+80]!r}")
-                                    break
-                    except Exception:
-                        pass
+                        if method == "JSON_POST":
+                            resp = s.post(url, json=body, allow_redirects=True, timeout=15)
+                        else:
+                            resp = s.request(method, url, data=body, params=params,
+                                             allow_redirects=True, timeout=15)
+                        rt = parse_qs(urlparse(resp.url).query).get("request_token", [None])[0]
+                        short = url.replace(base, "")
+                        print(f"  {method} {short} → {resp.status_code} rt={rt!r} body={resp.text[:200]!r}")
+                        if rt:
+                            r = resp
+                            request_token = rt
+                            break
+                    except requests.exceptions.ConnectionError as ce:
+                        err_url = str(ce.request.url) if (hasattr(ce, "request") and ce.request) else ""
+                        rt = parse_qs(urlparse(err_url).query).get("request_token", [None])[0]
+                        print(f"  {method} {url} → ConnErr rt={rt!r}")
+                        if rt:
+                            request_token = rt
+                            break
         except requests.exceptions.ConnectionError as e:
             # Redirect chain ended at 127.0.0.1 — extract from the failed request URL
             url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
