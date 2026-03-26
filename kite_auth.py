@@ -64,25 +64,36 @@ def login() -> str:
     r.raise_for_status()
     print(f"  twofa status={r.status_code} final_url={r.url!r}")
 
-    # Step 4: re-hit login_url (kite.zerodha.com, where auth cookies live).
-    # Server chains: /connect/login → /connect/finish → redirect_url?request_token=…
-    # Using allow_redirects=True lets requests follow the full chain.
-    # Falls back to connect_url if login_url doesn't yield a token.
+    # Step 4: chain is /connect/login → /connect/finish → redirect_url?request_token=…
+    # Follow each 302 manually so we can see exactly where each hop lands.
     request_token = None
-    step4_urls = [login_url, connect_url]
-    for step4_url in step4_urls:
-        try:
-            final_r = s.get(step4_url, allow_redirects=True, timeout=15)
-            print(f"  step4 GET → {final_r.status_code} url={final_r.url!r}")
-            request_token = parse_qs(urlparse(final_r.url).query).get("request_token", [None])[0]
-            if request_token:
-                break
-        except requests.exceptions.ConnectionError as e:
-            err_url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
-            print(f"  step4 ConnErr url={err_url!r}")
-            request_token = parse_qs(urlparse(err_url).query).get("request_token", [None])[0]
-            if request_token:
-                break
+
+    def _extract_token(url):
+        return parse_qs(urlparse(url).query).get("request_token", [None])[0]
+
+    def _follow_chain(start_url):
+        """Follow up to 3 hops manually; return request_token or None."""
+        url = start_url
+        for hop in range(3):
+            try:
+                r = s.get(url, allow_redirects=False, timeout=15)
+                loc = r.headers.get("Location", "")
+                print(f"  hop{hop} GET → {r.status_code} url={r.url!r} Location={loc!r}")
+                for candidate in [loc, r.url]:
+                    token = _extract_token(candidate)
+                    if token:
+                        return token
+                if r.status_code == 302 and loc:
+                    url = loc
+                else:
+                    return None  # no redirect and no token
+            except requests.exceptions.ConnectionError as e:
+                err_url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
+                print(f"  hop{hop} ConnErr url={err_url!r}")
+                return _extract_token(err_url)
+        return None
+
+    request_token = _follow_chain(login_url) or _follow_chain(connect_url)
 
     if not request_token:
         raise RuntimeError("Could not extract request_token from redirect chain.")
