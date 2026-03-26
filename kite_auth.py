@@ -66,16 +66,32 @@ def login() -> str:
     # the app's redirect_url with request_token.
     skip_url = login_url + ("&" if "?" in login_url else "?") + "skip_session=true"
     request_token = None
-    print(f"  skip_session URL: {skip_url!r}")
-    try:
-        final_r = s.get(skip_url, allow_redirects=True, timeout=15)
-        print(f"  skip_session final URL: {final_r.url!r} status={final_r.status_code}")
-        request_token = parse_qs(urlparse(final_r.url).query).get("request_token", [None])[0]
-    except requests.exceptions.ConnectionError as e:
-        # Redirect ended at 127.0.0.1 (refused) — extract token from failed URL
-        err_url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
-        print(f"  skip_session ConnectionError URL: {err_url!r}")
-        request_token = parse_qs(urlparse(err_url).query).get("request_token", [None])[0]
+    # Try several approaches to bypass/complete the consent step
+    base = "https://kite.zerodha.com"
+    sess_id = parse_qs(urlparse(login_url).query).get("sess_id", [None])[0] or ""
+    attempts = [
+        skip_url,  # original URL + skip_session=true
+        f"{base}/connect/authorize?api_key={api_key}&sess_id={sess_id}&skip_session=true",
+        f"{base}/connect/finish?api_key={api_key}&sess_id={sess_id}",
+        f"{base}/connect/authorize?api_key={api_key}&sess_id={sess_id}&action=allow",
+        f"{base}/connect/authorize?api_key={api_key}&sess_id={sess_id}&skip_session=1",
+    ]
+
+    for attempt_url in attempts:
+        try:
+            resp = s.get(attempt_url, allow_redirects=True, timeout=15)
+            rt = parse_qs(urlparse(resp.url).query).get("request_token", [None])[0]
+            print(f"  GET {attempt_url.replace(api_key, '***').replace(sess_id, '***')} → {resp.status_code} url={resp.url.replace(api_key, '***').replace(sess_id, '***')!r} rt={rt!r}")
+            if rt:
+                request_token = rt
+                break
+        except requests.exceptions.ConnectionError as e:
+            err_url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
+            rt = parse_qs(urlparse(err_url).query).get("request_token", [None])[0]
+            print(f"  GET {attempt_url.replace(api_key, '***')} → ConnErr rt={rt!r}")
+            if rt:
+                request_token = rt
+                break
 
     if not request_token:
         raise RuntimeError("Could not extract request_token from redirect chain.")
