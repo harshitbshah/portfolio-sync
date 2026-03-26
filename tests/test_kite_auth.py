@@ -95,15 +95,51 @@ class TestLogin:
             with pytest.raises(RuntimeError, match="Login failed"):
                 kite_auth.login()
 
-    def test_no_redirect_raises_missing_token(self):
+    def test_twofa_200_then_retrigger_finds_token(self):
+        """When twofa returns 200 (no redirect), re-hitting connect URL gets the token."""
+        s = MagicMock()
+
+        login_r = MagicMock()
+        login_r.json.return_value = {"status": "success", "data": {"request_id": "r"}}
+
+        twofa_r = MagicMock()
+        twofa_r.status_code = 200
+        twofa_r.headers = {}  # no Location
+
+        # connect re-hit returns 302 → redirect_url with request_token
+        retrigger_r = MagicMock()
+        retrigger_r.status_code = 302
+        retrigger_r.headers = {
+            "Location": "https://127.0.0.1/?request_token=rt_retrig&status=success"
+        }
+
+        token_r = MagicMock()
+        token_r.json.return_value = {"status": "success", "data": {"access_token": "at_retrig"}}
+
+        s.post.side_effect = [login_r, twofa_r, token_r]
+        s.get.return_value = retrigger_r  # both init GET and re-trigger GET return this
+
+        with patch("kite_auth.requests.Session", return_value=s), \
+             patch("kite_auth.pyotp.TOTP") as mock_totp, \
+             patch.dict(os.environ, _ENV):
+            mock_totp.return_value.now.return_value = "123456"
+            assert kite_auth.login() == "at_retrig"
+
+    def test_no_redirect_at_all_raises(self):
         s = MagicMock()
         login_r = MagicMock()
         login_r.json.return_value = {"status": "success", "data": {"request_id": "r"}}
         twofa_r = MagicMock()
-        twofa_r.status_code = 200  # no redirect — no Location header
+        twofa_r.status_code = 200
         twofa_r.headers = {}
-        twofa_r.json.return_value = {"status": "success", "data": {}}  # no request_token
+
+        # re-trigger also returns 200 with no Location
+        retrigger_r = MagicMock()
+        retrigger_r.status_code = 200
+        retrigger_r.headers = {}
+
         s.post.side_effect = [login_r, twofa_r]
+        s.get.return_value = retrigger_r
 
         with patch("kite_auth.requests.Session", return_value=s), \
              patch("kite_auth.pyotp.TOTP") as mock_totp, \
