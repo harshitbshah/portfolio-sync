@@ -96,22 +96,14 @@ def login() -> str:
                 # Landed on the OAuth consent page — POST to /api/connect/app/authorize
                 sess_id = final_params["sess_id"][0]
                 print(f"  authorize consent page — calling /api/connect/app/authorize")
-                try:
-                    r = s.post(
-                        "https://kite.zerodha.com/api/connect/app/authorize",
-                        data={"sess_id": sess_id},
-                        allow_redirects=True,
-                        timeout=15,
-                    )
-                    print(f"  authorize API status: {r.status_code}, URL: {r.url!r}")
-                    request_token = parse_qs(urlparse(r.url).query).get("request_token", [None])[0]
-                    if not request_token:
-                        # Maybe the response body contains location or request_token
-                        print(f"  authorize API body: {r.text[:300]!r}")
-                except requests.exceptions.ConnectionError as e:
-                    url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
-                    print(f"  authorize API ConnectionError URL: {url!r}")
-                    request_token = parse_qs(urlparse(url).query).get("request_token", [None])[0]
+                import re as _re
+                # Fetch index.js to get wider context around the authorize endpoint
+                js_r = s.get("https://kite.zerodha.com/static/js/index.c752df4a.js", timeout=15)
+                for pat in ["app/authorize", "sess_id", "connect.app"]:
+                    for m in _re.finditer(pat, js_r.text):
+                        ctx = js_r.text[max(0, m.start()-80):m.end()+120]
+                        print(f"  JS '{pat}' ctx: {ctx!r}")
+                        break  # just first match
         except requests.exceptions.ConnectionError as e:
             # Redirect chain ended at 127.0.0.1 — extract from the failed request URL
             url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
