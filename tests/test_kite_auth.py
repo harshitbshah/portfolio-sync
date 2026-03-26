@@ -102,6 +102,7 @@ class TestLogin:
         twofa_r = MagicMock()
         twofa_r.status_code = 200  # no redirect — no Location header
         twofa_r.headers = {}
+        twofa_r.json.return_value = {"status": "success", "data": {}}  # no request_token
         s.post.side_effect = [login_r, twofa_r]
 
         with patch("kite_auth.requests.Session", return_value=s), \

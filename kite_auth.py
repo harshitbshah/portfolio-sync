@@ -52,23 +52,44 @@ def login() -> str:
         timeout=15,
     )
 
+    print(f"  twofa status: {r.status_code}")
+    print(f"  twofa headers: {dict(r.headers)}")
+    try:
+        print(f"  twofa body: {r.text[:500]}")
+    except Exception:
+        pass
+
     request_token = None
-    for _ in range(10):
-        location = r.headers.get("Location", "")
-        params = parse_qs(urlparse(location).query)
-        if "request_token" in params:
-            request_token = params["request_token"][0]
-            break
-        if not location or r.status_code not in (301, 302, 303, 307, 308):
-            break
-        try:
-            r = s.get(location, allow_redirects=False, timeout=10)
-        except requests.exceptions.ConnectionError:
-            # Redirect to 127.0.0.1 — parse request_token from the Location header
+
+    # Check twofa JSON body first (some flows return token in body)
+    try:
+        body = r.json()
+        rt = body.get("data", {}).get("request_token")
+        if rt:
+            request_token = rt
+            print(f"  request_token found in twofa JSON body")
+    except Exception:
+        pass
+
+    if not request_token:
+        for _ in range(10):
+            location = r.headers.get("Location", "")
+            print(f"  redirect location: {location!r}")
             params = parse_qs(urlparse(location).query)
             if "request_token" in params:
                 request_token = params["request_token"][0]
-            break
+                break
+            if not location or r.status_code not in (301, 302, 303, 307, 308):
+                break
+            try:
+                r = s.get(location, allow_redirects=False, timeout=10)
+                print(f"  followed redirect → status: {r.status_code}")
+            except requests.exceptions.ConnectionError:
+                # Redirect to 127.0.0.1 — parse request_token from the Location header
+                params = parse_qs(urlparse(location).query)
+                if "request_token" in params:
+                    request_token = params["request_token"][0]
+                break
 
     if not request_token:
         raise RuntimeError("Could not extract request_token from login redirect")
