@@ -112,24 +112,23 @@ def login() -> str:
                 chunk_map = dict(_re.findall(r'(\d+):"([a-f0-9]{8})"', idx_js.text))
                 print(f"  relevant chunks: 526→{chunk_map.get('526')}, 126→{chunk_map.get('126')}")
                 base = "https://kite.zerodha.com"
-                for cid in ["526", "126"]:
-                    fname = chunk_map.get(cid)
-                    if not fname:
-                        continue
-                    js_r = s.get(f"{base}/static/js/{fname}.{cid}.js", timeout=15)
-                    if js_r.status_code != 200:
-                        # try alternate patterns
-                        for pat in [f"{cid}.{fname}.js", f"{fname}.js"]:
-                            js_r = s.get(f"{base}/static/js/{pat}", timeout=15)
-                            if js_r.status_code == 200:
-                                break
-                    print(f"  chunk {cid} ({fname}) status={js_r.status_code} size={len(js_r.text)}")
-                    if js_r.status_code == 200:
-                        for pat in ["authorize", "sess_id", "request_token", "confirm", "approve"]:
-                            matches = [js_r.text[max(0,m.start()-60):m.end()+100]
-                                      for m in _re.finditer(pat, js_r.text)]
-                            if matches:
-                                print(f"  chunk {cid} '{pat}': {matches[:2]}")
+                # Also look for all chunk filename patterns in index.js
+                all_chunks = _re.findall(r'["\'](\d+)["\']:\s*["\']([a-f0-9]{6,})["\']', idx_js.text)
+                print(f"  all chunk mappings (first 20): {all_chunks[:20]}")
+                # Try chunk 526 with various patterns
+                for cid, fname in all_chunks[:50]:
+                    for url_pat in [f"{fname}.{cid}.js", f"{cid}.{fname}.js"]:
+                        try:
+                            js_r = s.get(f"{base}/static/js/{url_pat}", timeout=5)
+                            if js_r.status_code == 200 and len(js_r.text) > 100:
+                                print(f"  FOUND chunk {cid}: /static/js/{url_pat} size={len(js_r.text)}")
+                                for pat in ["authorize", "sess_id", "app/authorize", "confirm"]:
+                                    for m in _re.finditer(pat, js_r.text):
+                                        ctx = js_r.text[max(0,m.start()-60):m.end()+100]
+                                        print(f"  chunk {cid} '{pat}': {ctx!r}")
+                                        break
+                        except Exception:
+                            pass
         except requests.exceptions.ConnectionError as e:
             # Redirect chain ended at 127.0.0.1 — extract from the failed request URL
             url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
