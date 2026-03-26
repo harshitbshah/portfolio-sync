@@ -47,8 +47,8 @@ def login() -> str:
         raise RuntimeError(f"Login failed: {payload.get('message')}")
     request_id = payload["data"]["request_id"]
 
-    # Step 3: submit TOTP — skip_session=True tells Zerodha to skip the OAuth
-    # consent page for this session, so step 4 can go directly to redirect_url
+    # Step 3: submit TOTP — skip_session tells Zerodha to skip the OAuth consent page
+    # Try with allow_redirects=True: if twofa redirects directly to redirect_url, capture it
     r = s.post(
         "https://kite.zerodha.com/api/twofa",
         data={
@@ -56,12 +56,13 @@ def login() -> str:
             "request_id":     request_id,
             "twofa_value":    pyotp.TOTP(totp_key).now(),
             "twofa_type":     "totp",
-            "skip_session":   True,
+            "skip_session":   "true",
         },
-        allow_redirects=False,
+        allow_redirects=True,
         timeout=15,
     )
     r.raise_for_status()
+    print(f"  twofa status={r.status_code} final_url={r.url!r}")
 
     # Step 4: re-hit the connect login URL; with authenticated cookies and
     # skip_session set during twofa, server redirects to redirect_url?request_token=…
