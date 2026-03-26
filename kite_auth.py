@@ -105,37 +105,31 @@ def login() -> str:
                 # Landed on the OAuth consent page — POST to /api/connect/app/authorize
                 sess_id = final_params["sess_id"][0]
                 print(f"  authorize consent page — calling /api/connect/app/authorize")
-                # /api/connect/session accepts GET — get session info to find app_id
+                # Find the connect-authorize chunk files in index.js to locate the authorize API call
+                import re as _re
+                idx_js = s.get("https://kite.zerodha.com/static/js/index.c752df4a.js", timeout=15)
+                # Find chunk ID → filename mapping (Webpack: e.g. 526:"abc123" maps chunk 526 to abc123.js)
+                chunk_map = dict(_re.findall(r'(\d+):"([a-f0-9]{8})"', idx_js.text))
+                print(f"  relevant chunks: 526→{chunk_map.get('526')}, 126→{chunk_map.get('126')}")
                 base = "https://kite.zerodha.com"
-                sess_info_r = s.get(f"{base}/api/connect/session",
-                                    params={"api_key": api_key, "sess_id": sess_id}, timeout=15)
-                sess_data = sess_info_r.json().get("data", {})
-                app_id = sess_data.get("app_id", "")
-                print(f"  connect session: app_id={app_id!r} redirect_params={sess_data.get('redirect_params')!r}")
-                candidates = [
-                    ("POST", f"{base}/api/connect/app/authorize", {"sess_id": sess_id, "api_key": api_key}, None),
-                    ("POST", f"{base}/api/apps/{app_id}/authorize",  {"sess_id": sess_id}, None),
-                    ("GET",  f"{base}/api/connect/app/authorize", None, {"api_key": api_key, "sess_id": sess_id}),
-                    ("PUT",  f"{base}/api/connect/session",  {"status": "authorized"}, {"api_key": api_key, "sess_id": sess_id}),
-                ]
-                for method, url, body, params in candidates:
-                    try:
-                        resp = s.request(method, url, data=body, params=params,
-                                         allow_redirects=True, timeout=15)
-                        rt = parse_qs(urlparse(resp.url).query).get("request_token", [None])[0]
-                        short = url.replace("https://kite.zerodha.com", "")
-                        print(f"  {method} {short} → {resp.status_code} url={resp.url!r} rt={rt!r} body={resp.text[:200]!r}")
-                        if rt:
-                            r = resp
-                            request_token = rt
-                            break
-                    except requests.exceptions.ConnectionError as ce:
-                        err_url = str(ce.request.url) if (hasattr(ce, "request") and ce.request) else ""
-                        rt = parse_qs(urlparse(err_url).query).get("request_token", [None])[0]
-                        print(f"  {method} {url} → ConnErr url={err_url!r} rt={rt!r}")
-                        if rt:
-                            request_token = rt
-                            break
+                for cid in ["526", "126"]:
+                    fname = chunk_map.get(cid)
+                    if not fname:
+                        continue
+                    js_r = s.get(f"{base}/static/js/{fname}.{cid}.js", timeout=15)
+                    if js_r.status_code != 200:
+                        # try alternate patterns
+                        for pat in [f"{cid}.{fname}.js", f"{fname}.js"]:
+                            js_r = s.get(f"{base}/static/js/{pat}", timeout=15)
+                            if js_r.status_code == 200:
+                                break
+                    print(f"  chunk {cid} ({fname}) status={js_r.status_code} size={len(js_r.text)}")
+                    if js_r.status_code == 200:
+                        for pat in ["authorize", "sess_id", "request_token", "confirm", "approve"]:
+                            matches = [js_r.text[max(0,m.start()-60):m.end()+100]
+                                      for m in _re.finditer(pat, js_r.text)]
+                            if matches:
+                                print(f"  chunk {cid} '{pat}': {matches[:2]}")
         except requests.exceptions.ConnectionError as e:
             # Redirect chain ended at 127.0.0.1 — extract from the failed request URL
             url = str(e.request.url) if (hasattr(e, "request") and e.request) else ""
