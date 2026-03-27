@@ -55,6 +55,18 @@ A success email is sent after every run. A failure email (with the raw log) is s
 ## Architecture
 
 ```
+                          Zerodha (user + password + TOTP)
+                                        │
+                                        ▼
+                                  kite_auth.py
+                              (validates cached enctoken,
+                               fresh login only if expired)
+                                        │
+                            enctoken (via $GITHUB_OUTPUT)
+                                        │
+          ┌─────────────────────────────┼──────────────────────────────────────┐
+          │                             │                                        │
+          ▼                             ▼                                        ▼
 Zerodha (enctoken)    Google Sheets (Indian PF balance)    Monarch Money (brokerage-linked)
         │                           │                                   │
         ▼                           ▼                                   ▼
