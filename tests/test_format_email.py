@@ -7,14 +7,14 @@ QUIET_LOG = """\
 Run: https://github.com/org/repo/actions/runs/123
 ─────────────────────────────────────────
 
-PF Summary: Indian PF $234,629.00 29.81% | US PF $552,332.00 70.19% | Total $786,962.00
+PF Summary: Indian PF $234,629.00 29.81% | US PF $552,332.00 55.55% | Cash $112,907.25 14.64% | Total $786,962.00
 Done. Updated 30, removed 0, added 0.
 """
 
 CHANGES_LOG = """\
 Run: https://github.com/org/repo/actions/runs/456
 
-PF Summary: Indian PF $234,629.00 29.81% | US PF $552,332.00 70.19% | Total $786,962.00
+PF Summary: Indian PF $234,629.00 29.81% | US PF $552,332.00 55.55% | Cash $112,907.25 14.64% | Total $786,962.00
 [Indian] Diff: FEDFINA +500
 [Indian] Diff: TDPOWERSYS -200
 [Indian] Closed: WINDLAS
@@ -26,13 +26,13 @@ Removing 1 closed positions: ['ZS']
 """
 
 WARNING_LOG = """\
-PF Summary: Indian PF $234,629.00 29.81% | US PF $552,332.00 70.19% | Total $786,962.00
+PF Summary: Indian PF $234,629.00 29.81% | US PF $552,332.00 55.55% | Cash $112,907.25 14.64% | Total $786,962.00
 WARNING: could not match Monarch accounts: ['9999']
 Done. Updated 30, removed 0, added 0.
 """
 
 ERROR_LOG = """\
-PF Summary: Indian PF $234,629.00 29.81% | US PF $552,332.00 70.19% | Total $786,962.00
+PF Summary: Indian PF $234,629.00 29.81% | US PF $552,332.00 55.55% | Cash $112,907.25 14.64% | Total $786,962.00
 ERROR: Sheet update failed
 """
 
@@ -62,8 +62,22 @@ class TestParse:
         assert data["indian_pf"] == "$234,629.00"
         assert data["indian_pct"] == "29.81%"
         assert data["us_pf"] == "$552,332.00"
-        assert data["us_pct"] == "70.19%"
+        assert data["us_pct"] == "55.55%"
+        assert data["cash"] == "$112,907.25"
+        assert data["cash_pct"] == "14.64%"
         assert data["total"] == "$786,962.00"
+
+    def test_parses_cash_when_present(self):
+        log = "PF Summary: Indian PF $100.00 50% | Cash $50.00 25% | Total $200.00\n"
+        data = fe.parse(log)
+        assert data["cash"] == "$50.00"
+        assert data["cash_pct"] == "25%"
+
+    def test_cash_none_when_absent(self):
+        log = "PF Summary: Indian PF $100.00 50% | US PF $100.00 50% | Total $200.00\n"
+        data = fe.parse(log)
+        assert data["cash"] is None
+        assert data["cash_pct"] is None
 
     def test_parses_indian_diffs(self):
         data = fe.parse(CHANGES_LOG)
@@ -143,6 +157,8 @@ class TestParse:
         assert data["run_url"] is None
         assert data["indian_pf"] is None
         assert data["us_pf"] is None
+        assert data["cash"] is None
+        assert data["cash_pct"] is None
         assert data["total"] is None
         assert data["indian_diffs"] == []
         assert data["indian_closed"] == []
@@ -159,6 +175,8 @@ class TestBuildSubject:
     def _d(self, **kw):
         base = {
             "total": "$786,962.00",
+            "cash": None,
+            "cash_pct": None,
             "indian_diffs": [],
             "indian_closed": [],
             "indian_new": [],
@@ -199,7 +217,9 @@ class TestBuildHtml:
             "indian_pf": "$234,629.00",
             "indian_pct": "29.81%",
             "us_pf": "$552,332.00",
-            "us_pct": "70.19%",
+            "us_pct": "55.55%",
+            "cash": "$112,907.25",
+            "cash_pct": "14.64%",
             "total": "$786,962.00",
             "indian_diffs": [],
             "indian_closed": [],
@@ -216,12 +236,23 @@ class TestBuildHtml:
         html = fe.build_html(self._quiet())
         assert "$234,629.00" in html
         assert "$552,332.00" in html
+        assert "$112,907.25" in html
         assert "$786,962.00" in html
 
     def test_includes_percentages(self):
         html = fe.build_html(self._quiet())
         assert "29.81%" in html
-        assert "70.19%" in html
+        assert "55.55%" in html
+        assert "14.64%" in html
+
+    def test_cash_row_shown_when_present(self):
+        html = fe.build_html(self._quiet(cash="$112,907.25", cash_pct="14.64%"))
+        assert "Cash" in html
+        assert "$112,907.25" in html
+
+    def test_cash_row_hidden_when_absent(self):
+        html = fe.build_html(self._quiet(cash=None, cash_pct=None))
+        assert "Cash" not in html
 
     def test_includes_run_url(self):
         html = fe.build_html(self._quiet())

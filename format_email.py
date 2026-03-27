@@ -13,6 +13,8 @@ def parse(text: str) -> dict:
         "us_pf":         None,   # "$552,332.00"
         "us_pct":        None,   # "70.19%"
         "total":         None,   # "$786,962.00"
+        "cash":          None,   # "$112,907.25"
+        "cash_pct":      None,   # "14.64%"
         "indian_diffs":  [],     # [("FEDFINA", "+500")]
         "indian_closed": [],     # ["WINDLAS"]
         "indian_new":    [],     # [("GPIL", "5804")]
@@ -40,6 +42,10 @@ def parse(text: str) -> dict:
                 if m:
                     data["us_pf"]  = f"${m.group(1)}"
                     data["us_pct"] = m.group(2)
+                m = re.match(r"Cash \$([0-9,]+\.\d+) ([0-9.]+%)", part)
+                if m:
+                    data["cash"]     = f"${m.group(1)}"
+                    data["cash_pct"] = m.group(2)
                 m = re.match(r"Total \$([0-9,]+\.\d+)", part)
                 if m:
                     data["total"] = f"${m.group(1)}"
@@ -127,7 +133,18 @@ def build_html(data: dict) -> str:
     indian_pct = data["indian_pct"] or ""
     us_pf      = data["us_pf"]      or "—"
     us_pct     = data["us_pct"]     or ""
+    cash       = data["cash"]       or "—"
+    cash_pct   = data["cash_pct"]   or ""
     total      = data["total"]      or "—"
+
+    cash_row = ""
+    if data["cash"]:
+        cash_row = f"""
+        <tr>
+          <td style="padding:5px 0;color:#555;">Cash</td>
+          <td style="padding:5px 0;text-align:right;font-weight:500;">{cash}</td>
+          <td style="padding:5px 0;text-align:right;color:#aaa;font-size:13px;padding-left:16px;">{cash_pct}</td>
+        </tr>"""
 
     summary_html = f"""
     <div style="padding:16px 24px 12px;">
@@ -141,7 +158,7 @@ def build_html(data: dict) -> str:
           <td style="padding:5px 0;color:#555;">US PF</td>
           <td style="padding:5px 0;text-align:right;font-weight:500;">{us_pf}</td>
           <td style="padding:5px 0;text-align:right;color:#aaa;font-size:13px;padding-left:16px;">{us_pct}</td>
-        </tr>
+        </tr>{cash_row}
         <tr style="border-top:1px solid #eee;">
           <td style="padding:8px 0 2px;font-weight:600;">Total</td>
           <td style="padding:8px 0 2px;text-align:right;font-weight:600;font-size:16px;">{total}</td>
