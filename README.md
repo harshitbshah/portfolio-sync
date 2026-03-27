@@ -98,6 +98,64 @@ sync_indian_portfolio.py        sync.py                  sync_us_portfolio.py
 | Indian PF P&L | Manual | Realized gains by Indian FY |
 | Subscriptions | Manual | Recurring subscription tracker |
 
+### PF Summary tab
+
+Account balances (driven by `ACCOUNTS_JSON`) and portfolio totals. `sync.py` writes to column C.
+
+```
+┌─────────────┬──────────────┬─────────────┐
+│ Category    │ Institution  │ Balance     │  ← written by sync.py
+├─────────────┼──────────────┼─────────────┤
+│ Bank        │ Chase        │  $5,000.00  │
+│ Bank        │ Chase        │  $2,500.00  │
+│ CDs         │ Marcus       │ $10,000.00  │
+│ PPF         │ ICICI        │  $8,000.00  │
+│ Indian PF   │              │ $180,000.00 │  ← read by sync.py → pushed to Monarch
+├─────────────┼──────────────┼─────────────┤
+│ SGOV        │ Total:       │         120 │  ← share count, written by sync.py
+├─────────────┼──────────────┼─────────────┤
+│ PF Breakdown│              │             │  ← header row (PF_BREAKDOWN_LABEL)
+│ Indian PF   │ $180,000     │     32.00%  │
+│ US PF       │ $380,000     │     68.00%  │
+│ Cash        │  $50,000     │      9.00%  │
+│ Total       │ $560,000     │            │
+└─────────────┴──────────────┴─────────────┘
+```
+
+### Indian Portfolio tab
+
+Zerodha DEMAT holdings. `sync_indian_portfolio.py` updates column C daily.
+
+```
+┌───────────┬────────────┬──────────┐
+│ Theme     │ Ticker     │ Quantity │  ← col C written by sync_indian_portfolio.py
+├───────────┼────────────┼──────────┤
+│ Finance   │ FEDFINA    │     1200 │
+│ Infra     │ GPIL       │     5804 │
+│ Healthcare│ NH         │      300 │
+│           │ NIFTYBEES  │      500 │  ← Theme left blank for new positions
+│ ...       │ ...        │      ... │
+└───────────┴────────────┴──────────┘
+```
+
+### US Portfolio tab
+
+Monarch Money holdings. `sync_us_portfolio.py` updates column D daily. Column E auto-recalculates via `GOOGLEFINANCE`.
+
+```
+┌───────────┬────────┬──────────┬──────────┬──────────────┬────────────┐
+│ Theme     │ Ticker │ % Total  │ Quantity │ Holdings ($) │ Conviction │
+├───────────┼────────┼──────────┼──────────┼──────────────┼────────────┤
+│ Cloud     │ AMZN   │   8.50%  │   45.00  │   $9,200.00  │ High       │
+│ Defense   │ RKLB   │   3.20%  │  460.87  │   $3,500.00  │ Medium     │
+│           │ NVDA   │   5.10%  │   22.00  │   $5,500.00  │            │  ← blank for new
+│ ...       │ ...    │    ...   │     ...  │        ...   │ ...        │
+└───────────┴────────┴──────────┴──────────┴──────────────┴────────────┘
+  col A       col B    col C      col D       col E          col F
+              ↑ read   formula    ↑ written   GOOGLEFINANCE
+              by script           by script   formula
+```
+
 ### Cells read by `sync.py` (PF Summary tab)
 
 | What | How located | Used for |
