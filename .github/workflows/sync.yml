@@ -39,7 +39,7 @@ jobs:
           KITE_ACCESS_TOKEN: ${{ steps.kite_auth.outputs.access_token }}
           GSHEET_SERVICE_ACCOUNT_JSON: ${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}
           GSHEET_SHEET_ID: ${{ vars.GSHEET_SHEET_ID }}
-        run: python sync_indian_portfolio.py 2>&1 | tee -a sync_output.txt
+        run: set -o pipefail; python sync_indian_portfolio.py 2>&1 | tee -a sync_output.txt
 
       - name: Sync Zerodha → Monarch + PF Summary sheet
         env:
@@ -52,14 +52,14 @@ jobs:
           ACCOUNTS_JSON: ${{ vars.ACCOUNTS_JSON }}
           SGOV_LABEL: ${{ vars.SGOV_LABEL }}
           PF_BREAKDOWN_LABEL: ${{ vars.PF_BREAKDOWN_LABEL }}
-        run: python sync.py 2>&1 | tee -a sync_output.txt
+        run: set -o pipefail; python sync.py 2>&1 | tee -a sync_output.txt
 
       - name: Sync Monarch holdings → US Portfolio sheet
         env:
           GSHEET_SERVICE_ACCOUNT_JSON: ${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}
           MONARCH_TOKEN: ${{ secrets.MONARCH_TOKEN }}
           GSHEET_SHEET_ID: ${{ vars.GSHEET_SHEET_ID }}
-        run: python sync_us_portfolio.py 2>&1 | tee -a sync_output.txt
+        run: set -o pipefail; python sync_us_portfolio.py 2>&1 | tee -a sync_output.txt
 
       - name: Format success email
         if: success()
