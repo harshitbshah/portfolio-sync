@@ -351,7 +351,32 @@ def update_google_sheet(balances: dict[int, float], sgov_total: float) -> None:
     ).execute()
 
 
-# ── Step 5: Read PF Breakdown summary table ───────────────────────────────────
+# ── Step 5: Fetch Monarch net worth ───────────────────────────────────────────
+def print_net_worth(token: str) -> None:
+    """Fetch today's aggregate net worth from Monarch and emit a log line."""
+    import datetime
+    today = datetime.date.today().isoformat()
+    payload = json.dumps({
+        "query": """
+        query GetAggregateSnapshots($filters: AggregateSnapshotFilters) {
+            aggregateSnapshots(filters: $filters) {
+                date
+                balance
+            }
+        }
+        """,
+        "variables": {"filters": {"startDate": today, "endDate": today}},
+    }).encode()
+    result = monarch_request(token, payload)
+    snapshots = result.get("data", {}).get("aggregateSnapshots", [])
+    if snapshots:
+        balance = snapshots[-1]["balance"]
+        print(f"[Monarch] Net Worth: ${balance:,.2f}")
+    else:
+        print("WARNING: No aggregate snapshot returned from Monarch", file=sys.stderr)
+
+
+# ── Step 6: Read PF Breakdown summary table ───────────────────────────────────
 def print_pf_summary() -> None:
     """Find 'PF Breakdown' header dynamically and print a parseable summary line."""
     rows = _read_sheet_rows()
@@ -436,6 +461,9 @@ if __name__ == "__main__":
 
     print("Emergency fund balances:")
     print_ef_breakdown(balances)
+
+    print("\nFetching Monarch net worth...")
+    print_net_worth(token)
 
     print("\nReading PF summary...")
     print_pf_summary()

@@ -8,6 +8,7 @@ import re
 def parse(text: str) -> dict:
     data = {
         "run_url":       None,
+        "net_worth":     None,   # "$1,144,966.35"
         "indian_pf":     None,   # "$234,629.00"
         "indian_pct":    None,   # "29.81%"
         "us_pf":         None,   # "$552,332.00"
@@ -31,6 +32,11 @@ def parse(text: str) -> dict:
 
         if line_s.startswith("Run: http"):
             data["run_url"] = line_s[5:].strip()
+
+        # [Monarch] Net Worth: $1,144,966.35
+        m = re.match(r"\[Monarch\] Net Worth: \$([0-9,]+\.\d+)", line_s)
+        if m:
+            data["net_worth"] = f"${m.group(1)}"
 
         # PF Summary: Indian PF $234,629.00 29.81% | US PF $552,332.00 70.19% | Total $786,962.00
         if line_s.startswith("PF Summary:"):
@@ -273,6 +279,7 @@ def build_html(data: dict) -> str:
     <div style="padding:20px 24px 16px;border-bottom:1px solid #f0f0f0;">
       <span style="font-size:18px;font-weight:600;">{emoji} Portfolio sync</span>
       <span style="color:#888;margin-left:8px;font-size:13px;">{date_str}</span>
+      {f'<div style="margin-top:8px;font-size:26px;font-weight:700;letter-spacing:-0.5px;">{data["net_worth"]}<span style="font-size:13px;font-weight:400;color:#888;margin-left:6px;">net worth</span></div>' if data["net_worth"] else ""}
     </div>{warning_html}{summary_html}{indian_section}{us_section}{margin_section}{sgov_section}{ef_section}{footer_html}
   </div>
   <p style="text-align:center;color:#ccc;font-size:11px;margin-top:8px;">portfolio-sync · GitHub Actions</p>
