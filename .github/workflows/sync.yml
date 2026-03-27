@@ -41,7 +41,7 @@ jobs:
       - name: Cache Kite access token
         run: gh variable set KITE_ENCTOKEN_CACHE --body "${{ steps.kite_auth.outputs.access_token }}"
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_VARIABLES_PAT }}
 
       - name: Sync Indian Portfolio → Google Sheet
         env:
