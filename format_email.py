@@ -176,7 +176,7 @@ def build_html(data: dict) -> str:
       <span style="color:#888;margin-left:8px;font-size:13px;">{date_str}</span>
     </div>{warning_html}{summary_html}{indian_section}{us_section}{footer_html}
   </div>
-  <p style="text-align:center;color:#ccc;font-size:11px;margin-top:16px;">portfolio-sync · GitHub Actions</p>
+  <p style="text-align:center;color:#ccc;font-size:11px;margin-top:8px;">portfolio-sync · GitHub Actions</p>
 </div>
 </body>
 </html>"""
