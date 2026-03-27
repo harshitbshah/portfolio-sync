@@ -4,7 +4,7 @@ Daily automation that keeps a personal Google Sheet portfolio tracker in sync wi
 
 ## What it does
 
-Four scripts run in sequence each weekday:
+Five scripts run in sequence each weekday:
 
 ### 1. `kite_auth.py` — Zerodha headless login
 
@@ -17,30 +17,36 @@ Logs in to Zerodha using user ID + password + TOTP (via `pyotp`), extracts the `
 - **Removes** rows for tickers no longer held in Zerodha (closed positions)
 - **Inserts** new rows for tickers in Zerodha not yet in the sheet — Theme is left blank for manual entry
 
-### 3. `sync.py` — Zerodha + Monarch balances → PF Summary sheet
+### 3. `sync.py` — Monarch balances → PF Summary sheet + email data
 
 - Reads the **Indian PF** USD balance from the *PF Summary* tab and updates the manual Zerodha account in **Monarch Money**
-- Reads all US brokerage account balances from Monarch and writes them back to the *PF Summary* tab (bank accounts, CDs, etc.)
-- Tracks the total SGOV share count across all brokerage accounts
-- Reads the **PF Breakdown** table from the sheet and emits a parseable summary line for the email
+- Reads all US brokerage account balances from Monarch and writes them to the *PF Summary* tab (bank accounts, PPF, CDs)
+- Fetches SGOV holdings across all brokerage accounts — writes total share count to the PF Summary sheet, and emits per-account dollar values as structured `[SGOV]` log lines for the email
+- Emits per-account balance lines as `[EF]` log lines (bank, PPF, CDs) for the Liquid Reserves email section
+- Reads the **PF Breakdown** table (Indian PF / US PF / Cash rows) and emits a parseable summary line for the email
 
 ### 4. `sync_us_portfolio.py` — Monarch holdings → US Portfolio sheet
 
-Monarch Money is the source of truth (it integrates with all brokerage accounts). This script:
+Monarch Money is the source of truth (it integrates with all US brokerage accounts). This script:
 
 - **Updates** Column D (Quantity) for all tickers already in the *US Portfolio* tab
 - **Removes** rows for tickers no longer held in any brokerage account (closed positions)
 - **Inserts** new rows for tickers that appear in Monarch but not yet in the sheet — Theme and Conviction Rating are left blank for manual entry
 
+Skips cash/money-market instruments and SGOV (managed separately via PF Summary): `CUR:USD`, `FCASH`, `FDRXX`, `SPAXX`, `SGOV`.
+
 The Holdings column (E) auto-recalculates via `GOOGLEFINANCE` formulas once quantities are updated.
 
-### Email notification (`format_email.py`)
+### 5. `format_email.py` — HTML email builder
 
-After all sync scripts finish, `format_email.py` parses the combined log (`sync_output.txt`) and generates an HTML email showing:
-- Portfolio totals (Indian PF / US PF / Total, with allocation %)
-- Indian PF changes: quantity diffs, new positions, closed positions
-- US PF changes: new positions, closed positions
-- Warning banner if any WARNING/ERROR lines were emitted
+Parses the combined log (`sync_output.txt`) from all prior steps and generates an HTML email with:
+
+- **Portfolio summary table** — Indian PF / US PF / Cash / Total with allocation percentages
+- **Indian PF changes** — quantity diffs (±shares), new positions, closed positions
+- **US PF changes** — new positions, closed positions
+- **SGOV (0–3M Treasury)** — per-account dollar value breakdown, grouped by institution (Fidelity / Robinhood)
+- **Liquid Reserves** — bank / PPF / CDs balances grouped by category, with total
+- **Warning banner** — shown if any WARNING or ERROR lines were emitted
 
 A success email is sent after every run. A failure email (with the raw log) is sent if any step exits non-zero.
 
@@ -53,25 +59,25 @@ Zerodha (enctoken)    Google Sheets (Indian PF balance)    Monarch Money (broker
 sync_indian_portfolio.py        sync.py                  sync_us_portfolio.py
         │                    ┌──────┴──────┐              ┌─────────────┴─────────────┐
         ▼                    ▼             ▼              ▼             ▼             ▼
- Update Indian         Update Zerodha  Write account  Update qty  Remove closed  Add new
- Portfolio tab         in Monarch      balances+SGOV  for tickers  positions    positions
-                                            │                                   │
-                                            └───────────────┬───────────────────┘
-                                                            ▼
-                                              Google Sheets (Personal tracker)
-                                                            │
-                                                            ▼
-                                                   format_email.py
-                                                            │
-                                                            ▼
-                                                  HTML email (Gmail SMTP)
+ Update Indian         Update Zerodha  Write balances  Update qty  Remove closed  Add new
+ Portfolio tab         in Monarch      +SGOV to sheet  for tickers  positions    positions
+                            │                                                        │
+                            └───────────────────┬────────────────────────────────────┘
+                                                ▼
+                                  Google Sheets (Personal tracker)
+                                                │
+                                                ▼
+                                       format_email.py
+                                                │
+                                                ▼
+                                      HTML email (Gmail SMTP)
 ```
 
 ## Sheet structure
 
 | Tab | Managed by | Description |
 |-----|-----------|-------------|
-| PF Summary | `sync.py` | Net worth overview — bank, CDs, bonds, Indian + US PF totals |
+| PF Summary | `sync.py` | Net worth overview — bank, CDs, PPF, SGOV quantity, Indian + US PF + Cash totals |
 | US Portfolio | `sync_us_portfolio.py` | US equity positions with Theme, Quantity, Holdings, Conviction |
 | US PF P&L | Manual | Realized gains by year; performance vs SPY/QQQ |
 | Indian Portfolio | `sync_indian_portfolio.py` | Indian equity holdings — Zerodha quantities synced daily |
@@ -83,39 +89,49 @@ sync_indian_portfolio.py        sync.py                  sync_us_portfolio.py
 | What | How located | Used for |
 |------|------------|----------|
 | Indian PF balance | Row where col A/B = `GSHEET_LABEL` (default `Indian PF`), value in next column | Push to Monarch as Zerodha balance |
-| Account balance rows | Col A = `sheet_category`, Col B = `sheet_institution` from `ACCOUNTS_JSON` | Pull from Monarch and write to Col C |
+| Account balance rows | Col A = `sheet_category`, Col B = `sheet_institution` from `ACCOUNTS_JSON` | Pull from Monarch, write to Col C |
 | SGOV quantity cell | Cell immediately to the right of `SGOV_LABEL` (default `Total:`) | Write total SGOV share count |
-| PF Breakdown table | Rows below `PF_BREAKDOWN_LABEL` header (default `PF Breakdown`); label \| amount \| pct | Email summary — Indian PF / US PF / Total with allocation % |
-
-### Cells read by `sync_indian_portfolio.py` (Indian Portfolio tab)
-
-| What | Range | Used for |
-|------|-------|----------|
-| All ticker rows | `B:C` (ticker + quantity), starting row 2 | Diff against Zerodha holdings |
-
-### Cells written by `sync_indian_portfolio.py` (Indian Portfolio tab)
-
-| What | Column | Notes |
-|------|--------|-------|
-| Quantity | C | Updated for all existing positions |
-| New rows | A–C | Inserted at end; Theme (col A) left blank |
-| Closed rows | — | Entire row deleted |
+| PF Breakdown table | Rows below `PF_BREAKDOWN_LABEL` header; columns: label \| amount \| pct | Email summary — Indian PF / US PF / Cash / Total |
 
 ### Cells written by `sync.py` (PF Summary tab)
 
 | What | Column | Notes |
 |------|--------|-------|
 | Account balances | C | One row per `ACCOUNTS_JSON` entry, matched by category + institution |
-| SGOV quantity | Right of `SGOV_LABEL` | Share count, not dollar value |
+| SGOV quantity | Right of `SGOV_LABEL` | Total share count across all brokerage accounts |
+
+### Cells read/written by `sync_indian_portfolio.py` (Indian Portfolio tab)
+
+| What | Column | Notes |
+|------|--------|-------|
+| Read tickers + quantities | B, C | Diff against Zerodha holdings |
+| Quantity | C | Updated for all existing positions |
+| New rows | A–C | Inserted at end; Theme (col A) left blank |
+| Closed rows | — | Entire row deleted |
 
 ### Cells read/written by `sync_us_portfolio.py` (US Portfolio tab)
 
 | What | Column | Notes |
 |------|--------|-------|
-| Read tickers | B | Used to diff against Monarch holdings |
+| Read tickers | B | Diff against Monarch holdings |
 | Quantity | D | Updated for all existing positions |
 | New rows | A–F | Theme (A), Ticker (B), % of total (C formula), Qty (D), Holdings/GOOGLEFINANCE (E formula), Conviction (F) |
 | Closed rows | — | Entire row deleted |
+
+## Structured log lines
+
+`sync.py` emits machine-readable lines that `format_email.py` parses to build the email:
+
+| Pattern | Example | Used for |
+|---------|---------|----------|
+| `[Indian] Diff: TICKER ±N` | `[Indian] Diff: FEDFINA +500` | Indian PF quantity change |
+| `[Indian] Closed: TICKER` | `[Indian] Closed: WINDLAS` | Indian position exited |
+| `[Indian] Added: TICKER +QTY` | `[Indian] Added: GPIL +5804` | New Indian position |
+| `[US] Closed: TICKER` | `[US] Closed: ZS` | US position exited |
+| `[US] Added: TICKER +QTY` | `[US] Added: RKLB +460.87` | New US position |
+| `[SGOV] NAME: $VALUE` | `[SGOV] Fidelity ROTH (...4882): $37860.19` | Per-account SGOV dollar value |
+| `[EF] CATEGORY\|INSTITUTION: $BALANCE` | `[EF] Bank\|Chase: $11995.54` | Per-account liquid reserves balance |
+| `PF Summary: ...` | `PF Summary: Indian PF $234k 30% \| US PF $424k 55% \| Cash $113k 15% \| Total $771k` | Portfolio breakdown for email header |
 
 ## Setup
 
@@ -187,7 +203,7 @@ print(s['token'])
 | `INDIAN_PORTFOLIO_TAB` | `Indian Portfolio` | Tab name for `sync_indian_portfolio.py` |
 | `US_PORTFOLIO_TAB` | `US Portfolio` | Tab name for `sync_us_portfolio.py` |
 
-`ACCOUNTS_JSON` maps each brokerage account to a row in the PF Summary tab:
+`ACCOUNTS_JSON` maps each Monarch account to a row in the PF Summary tab:
 ```json
 [
   {"mask": "1234", "sheet_category": "Bank", "sheet_institution": "Chase"},
@@ -195,7 +211,7 @@ print(s['token'])
   {"monarch_name": "PayPal", "sheet_category": "Bank", "sheet_institution": "PayPal"}
 ]
 ```
-Use `mask` (last 4 digits) for institution-synced accounts, `monarch_name` for manual accounts. For duplicate `sheet_category` + `sheet_institution` pairs (e.g. two Chase accounts), entries are matched in the order they appear in the sheet.
+Use `mask` (last 4 digits) for institution-synced accounts, `monarch_name` for manual accounts. For duplicate `sheet_category` + `sheet_institution` pairs (e.g. two Chase accounts), entries are matched in the order they appear in the sheet. These same entries also drive the **Liquid Reserves** section of the email.
 
 ## Running locally
 
@@ -233,7 +249,7 @@ Copy `.env.example` to `.env` and fill in your values for a more convenient loca
 python -m pytest tests/
 ```
 
-Tests cover `kite_auth.py` (login flow), `sync.py` (pure logic functions), and `format_email.py` (parsing and HTML generation). Google Sheets and Monarch API calls are mocked.
+Tests cover `kite_auth.py` (login flow), `sync.py` (pure logic functions), and `format_email.py` (parsing and HTML generation). Google Sheets and Monarch API calls are mocked. 114 tests as of the last checkpoint.
 
 ## Maintenance
 
@@ -251,3 +267,9 @@ When `sync_us_portfolio.py` inserts a new row, **Theme** and **Conviction Rating
 ### Closed positions (US Portfolio)
 
 Rows are deleted automatically when a ticker is no longer found in any Monarch brokerage account. If a position disappears temporarily due to a brokerage sync delay, it will be re-inserted on the next run (with blank Theme/Conviction — keep an eye on this).
+
+### SGOV
+
+SGOV is excluded from the US Portfolio tab (`_SKIP_TICKERS`) and tracked separately:
+- Total share count is written to the cell to the right of `SGOV_LABEL` in PF Summary
+- Per-account dollar values appear in the **SGOV (0–3M Treasury)** email section, grouped by institution (Fidelity / Robinhood)
