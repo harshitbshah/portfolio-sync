@@ -349,14 +349,14 @@ class TestBuildHtml:
             ("Bank", "Chase", 11995.54),
             ("CDs", "Marcus", 11574.97),
         ]))
-        assert "Emergency Funds" in html
+        assert "Liquid Reserves" in html
         assert "Bank" in html
         assert "Chase" in html
         assert "11,995.54" in html
 
     def test_ef_section_hidden_when_empty(self):
         html = fe.build_html(self._quiet(ef=[]))
-        assert "Emergency Funds" not in html
+        assert "Liquid Reserves" not in html
 
     def test_ef_grouped_by_category(self):
         html = fe.build_html(self._quiet(ef=[

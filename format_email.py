@@ -218,7 +218,7 @@ def build_html(data: dict) -> str:
                       f'</tr>')
         sgov_section = _changes_section("SGOV (0–3M Treasury)", sgov_rows)
 
-    # Emergency Funds breakdown — grouped by category
+    # Liquid Reserves breakdown — grouped by category
     ef_section = ""
     if data["ef"]:
         groups: dict[str, list] = {}
@@ -238,7 +238,7 @@ def build_html(data: dict) -> str:
                     f'<td style="padding:5px 0 2px;font-size:12px;font-weight:600;">Total</td>'
                     f'<td style="padding:5px 0 2px;font-size:12px;text-align:right;font-family:monospace;font-weight:600;">${total_ef:,.2f}</td>'
                     f'</tr>')
-        ef_section = _changes_section("Emergency Funds", ef_rows)
+        ef_section = _changes_section("Liquid Reserves", ef_rows)
 
     # Footer
     footer_html = ""
