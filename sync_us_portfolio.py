@@ -32,8 +32,8 @@ US_PORTFOLIO_TAB = os.getenv("US_PORTFOLIO_TAB", "US Portfolio")
 
 _TICKER_RE = re.compile(r"^[A-Z]{1,5}$")
 
-# Cash/money-market instruments that Monarch returns as "holdings" — skip these.
-_SKIP_TICKERS = {"CUR:USD", "FCASH", "FDRXX", "SPAXX"}
+# Cash/money-market instruments and tickers managed elsewhere — skip these.
+_SKIP_TICKERS = {"CUR:USD", "FCASH", "FDRXX", "SPAXX", "SGOV"}
 
 
 # ── Google Sheets helpers ─────────────────────────────────────────────────────
