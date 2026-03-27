@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      variables: write     # needed to update KITE_ENCTOKEN_CACHE after fresh login
+      actions: write       # needed to update KITE_ENCTOKEN_CACHE variable after fresh login
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
