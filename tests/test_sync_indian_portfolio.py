@@ -163,5 +163,5 @@ class TestSync:
             sip.delete_closed_rows(to_remove, sheet_holdings)
 
         body = mock_svc.spreadsheets.return_value.batchUpdate.call_args[1]["body"]
-        indices = [r["deleteDimension"]["range"]["startIndex"] for r in body["requests"]]
+        indices = [r["deleteRange"]["range"]["startRowIndex"] for r in body["requests"]]
         assert indices == sorted(indices, reverse=True)

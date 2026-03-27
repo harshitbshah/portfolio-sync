@@ -168,13 +168,13 @@ def delete_closed_rows(to_remove: set[str], sheet_tickers: list[tuple[int, str]]
     )
     requests = [
         {
-            "deleteDimension": {
+            "deleteRange": {
                 "range": {
-                    "sheetId": grid_id,
-                    "dimension": "ROWS",
-                    "startIndex": row - 1,  # 0-indexed
-                    "endIndex": row,
-                }
+                    "sheetId":       grid_id,
+                    "startRowIndex": row - 1,  # 0-indexed
+                    "endRowIndex":   row,
+                },
+                "shiftDimension": "ROWS",
             }
         }
         for row in rows_to_delete
