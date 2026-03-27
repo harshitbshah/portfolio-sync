@@ -184,8 +184,8 @@ def build_html(data: dict) -> str:
         for inst in sorted(groups.keys()):
             entries = sorted(groups[inst], key=lambda x: x[0])
             sgov_rows += (f'\n      <tr><td colspan="2" style="padding:6px 0 2px;'
-                          f'font-size:11px;color:#aaa;text-transform:uppercase;'
-                          f'letter-spacing:0.5px;">{inst}</td></tr>')
+                          f'font-size:11px;color:#888;text-transform:uppercase;'
+                          f'letter-spacing:0.8px;font-weight:700;">{inst}</td></tr>')
             for name, value in entries:
                 total_sgov_value += value
                 sgov_rows += _sgov_row(name, f"${value:,.0f}")
