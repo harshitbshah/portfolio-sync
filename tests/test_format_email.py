@@ -49,6 +49,15 @@ SGOV_LOG = """\
 [SGOV] ROTH IRA (...*****4882): $37860.19
 """
 
+EF_LOG = """\
+[EF] Bank|Chase: $11995.54
+[EF] Bank|Chase: $1500.00
+[EF] Bank|ICICI: $918.54
+[EF] PPF|ICICI: $2269.00
+[EF] CDs|Marcus: $11574.97
+[EF] CDs|Marcus: $11558.50
+"""
+
 
 # ── parse() ───────────────────────────────────────────────────────────────────
 
@@ -152,6 +161,21 @@ class TestParse:
         assert val_map["Robinhood individual (...8902)"] == pytest.approx(5710.85)
         assert val_map["ROTH IRA (...*****4882)"] == pytest.approx(37860.19)
 
+    def test_parses_ef_entries(self):
+        data = fe.parse(EF_LOG)
+        rows = [(cat, inst) for cat, inst, _ in data["ef"]]
+        assert ("Bank", "Chase") in rows
+        assert ("PPF", "ICICI") in rows
+        assert ("CDs", "Marcus") in rows
+
+    def test_parses_ef_values(self):
+        data = fe.parse(EF_LOG)
+        bank_chase_vals = [bal for cat, inst, bal in data["ef"] if cat == "Bank" and inst == "Chase"]
+        assert pytest.approx(11995.54) in bank_chase_vals
+        assert pytest.approx(1500.00) in bank_chase_vals
+        ppf_vals = [bal for cat, inst, bal in data["ef"] if cat == "PPF"]
+        assert ppf_vals == [pytest.approx(2269.00)]
+
     def test_empty_log_gives_safe_defaults(self):
         data = fe.parse("")
         assert data["run_url"] is None
@@ -166,6 +190,7 @@ class TestParse:
         assert data["us_closed"] == []
         assert data["us_new"] == []
         assert data["sgov"] == []
+        assert data["ef"] == []
         assert data["warnings"] == []
 
 
@@ -183,6 +208,7 @@ class TestBuildSubject:
             "us_closed": [],
             "us_new": [],
             "sgov": [],
+            "ef": [],
             "warnings": [],
         }
         base.update(kw)
@@ -227,6 +253,7 @@ class TestBuildHtml:
             "us_closed": [],
             "us_new": [],
             "sgov": [],
+            "ef": [],
             "warnings": [],
         }
         base.update(kw)
@@ -316,3 +343,24 @@ class TestBuildHtml:
             ("Account B", 63000.0),
         ]))
         assert "113,000" in html or "$113,000" in html
+
+    def test_ef_section_shown(self):
+        html = fe.build_html(self._quiet(ef=[
+            ("Bank", "Chase", 11995.54),
+            ("CDs", "Marcus", 11574.97),
+        ]))
+        assert "Emergency Funds" in html
+        assert "Bank" in html
+        assert "Chase" in html
+        assert "11,995.54" in html
+
+    def test_ef_section_hidden_when_empty(self):
+        html = fe.build_html(self._quiet(ef=[]))
+        assert "Emergency Funds" not in html
+
+    def test_ef_grouped_by_category(self):
+        html = fe.build_html(self._quiet(ef=[
+            ("Bank", "Chase", 1000.0),
+            ("CDs", "Marcus", 2000.0),
+        ]))
+        assert html.index("Bank") < html.index("CDs")

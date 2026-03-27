@@ -399,6 +399,18 @@ def print_pf_summary() -> None:
     print(f"PF Summary: {' | '.join(parts)}")
 
 
+# ── Step 5b: Print Emergency Fund breakdown ───────────────────────────────────
+def print_ef_breakdown(balances: dict[int, float]) -> None:
+    """Emit [EF] log lines for each matched account in SHEET_ACCOUNTS."""
+    for i, entry in enumerate(SHEET_ACCOUNTS):
+        balance = balances.get(i)
+        if balance is None:
+            continue
+        category = entry["sheet_category"]
+        institution = entry["sheet_institution"]
+        print(f"[EF] {category}|{institution}: ${balance:.2f}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     token = os.environ["MONARCH_TOKEN"]
@@ -421,6 +433,9 @@ if __name__ == "__main__":
 
     print("Writing to Google Sheets...")
     update_google_sheet(balances, sgov_total)
+
+    print("Emergency fund balances:")
+    print_ef_breakdown(balances)
 
     print("\nReading PF summary...")
     print_pf_summary()

@@ -21,6 +21,7 @@ def parse(text: str) -> dict:
         "us_closed":     [],     # ["ZS"]
         "us_new":        [],     # [("RKLB", "460.87")]
         "sgov":          [],     # [("Robinhood individual (...8902)", 56.76)]
+        "ef":            [],     # [("Bank", "Chase", 11995.54)]
         "warnings":      [],
     }
 
@@ -80,6 +81,11 @@ def parse(text: str) -> dict:
         m = re.match(r"\[SGOV\] (.+): \$([0-9.]+)", line_s)
         if m:
             data["sgov"].append((m.group(1), float(m.group(2))))
+
+        # [EF] Bank|Chase: $11995.54
+        m = re.match(r"\[EF\] ([^|]+)\|([^:]+): \$([0-9.]+)", line_s)
+        if m:
+            data["ef"].append((m.group(1), m.group(2), float(m.group(3))))
 
         if re.match(r"(WARNING|ERROR):", line_s):
             data["warnings"].append(line_s)
@@ -212,6 +218,28 @@ def build_html(data: dict) -> str:
                       f'</tr>')
         sgov_section = _changes_section("SGOV (0–3M Treasury)", sgov_rows)
 
+    # Emergency Funds breakdown — grouped by category
+    ef_section = ""
+    if data["ef"]:
+        groups: dict[str, list] = {}
+        for category, institution, balance in data["ef"]:
+            groups.setdefault(category, []).append((institution, balance))
+
+        ef_rows = ""
+        total_ef = 0.0
+        for category in groups:
+            ef_rows += (f'\n      <tr><td colspan="2" style="padding:6px 0 2px;'
+                        f'font-size:11px;color:#888;text-transform:uppercase;'
+                        f'letter-spacing:0.8px;font-weight:700;">{category}</td></tr>')
+            for institution, balance in groups[category]:
+                total_ef += balance
+                ef_rows += _sgov_row(institution, f"${balance:,.2f}")
+        ef_rows += (f'\n      <tr style="border-top:1px solid #f0f0f0;">'
+                    f'<td style="padding:5px 0 2px;font-size:12px;font-weight:600;">Total</td>'
+                    f'<td style="padding:5px 0 2px;font-size:12px;text-align:right;font-family:monospace;font-weight:600;">${total_ef:,.2f}</td>'
+                    f'</tr>')
+        ef_section = _changes_section("Emergency Funds", ef_rows)
+
     # Footer
     footer_html = ""
     if data["run_url"]:
@@ -228,7 +256,7 @@ def build_html(data: dict) -> str:
     <div style="padding:20px 24px 16px;border-bottom:1px solid #f0f0f0;">
       <span style="font-size:18px;font-weight:600;">{emoji} Portfolio sync</span>
       <span style="color:#888;margin-left:8px;font-size:13px;">{date_str}</span>
-    </div>{warning_html}{summary_html}{indian_section}{us_section}{sgov_section}{footer_html}
+    </div>{warning_html}{summary_html}{indian_section}{us_section}{sgov_section}{ef_section}{footer_html}
   </div>
   <p style="text-align:center;color:#ccc;font-size:11px;margin-top:8px;">portfolio-sync · GitHub Actions</p>
 </div>
