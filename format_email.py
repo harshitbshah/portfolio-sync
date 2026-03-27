@@ -171,14 +171,24 @@ def build_html(data: dict) -> str:
         us_rows += _change_row(ticker, val)
     us_section = _changes_section("US PF changes", us_rows) if us_rows else ""
 
-    # SGOV breakdown
+    # SGOV breakdown — grouped by institution
     sgov_section = ""
     if data["sgov"]:
+        groups: dict[str, list] = {}
+        for name, value in data["sgov"]:
+            inst = "Robinhood" if "robinhood" in name.lower() else "Fidelity"
+            groups.setdefault(inst, []).append((name, value))
+
         sgov_rows = ""
         total_sgov_value = 0.0
-        for name, value in data["sgov"]:
-            total_sgov_value += value
-            sgov_rows += _sgov_row(name, f"${value:,.0f}")
+        for inst in sorted(groups.keys()):
+            entries = sorted(groups[inst], key=lambda x: x[0])
+            sgov_rows += (f'\n      <tr><td colspan="2" style="padding:6px 0 2px;'
+                          f'font-size:11px;color:#aaa;text-transform:uppercase;'
+                          f'letter-spacing:0.5px;">{inst}</td></tr>')
+            for name, value in entries:
+                total_sgov_value += value
+                sgov_rows += _sgov_row(name, f"${value:,.0f}")
         sgov_rows += (f'\n      <tr style="border-top:1px solid #f0f0f0;">'
                       f'<td style="padding:5px 0 2px;font-size:12px;font-weight:600;">Total</td>'
                       f'<td style="padding:5px 0 2px;font-size:12px;text-align:right;font-family:monospace;font-weight:600;">${total_sgov_value:,.0f}</td>'
