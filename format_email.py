@@ -266,7 +266,7 @@ def build_html(data: dict) -> str:
                       f'<td style="padding:5px 0 2px;font-size:12px;font-weight:600;">Total</td>'
                       f'<td style="padding:5px 0 2px;font-size:12px;text-align:right;font-family:monospace;font-weight:600;">${total_uninvested:,.0f}</td>'
                       f'</tr>')
-        uninvested_section = _changes_section(f"Uninvested Cash — deploy into SGOV", cash_rows)
+        uninvested_section = _changes_section("Uninvested Cash", cash_rows)
 
     # Liquid Reserves breakdown — grouped by category
     ef_section = ""
