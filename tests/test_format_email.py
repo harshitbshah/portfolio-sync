@@ -221,6 +221,7 @@ class TestBuildSubject:
             "us_closed": [],
             "us_new": [],
             "sgov": [],
+            "uninvested_cash": [],
             "ef": [],
             "warnings": [],
         }
@@ -268,6 +269,7 @@ class TestBuildHtml:
             "us_closed": [],
             "us_new": [],
             "sgov": [],
+            "uninvested_cash": [],
             "ef": [],
             "warnings": [],
         }

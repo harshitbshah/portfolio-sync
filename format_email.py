@@ -23,6 +23,7 @@ def parse(text: str) -> dict:
         "us_new":        [],     # [("RKLB", "460.87")]
         "zerodha_margin": None,  # 12345.67
         "sgov":          [],     # [("Robinhood individual (...8902)", 56.76)]
+        "uninvested_cash": [],   # [("Robinhood IRA (...8051)", 2624.84)]
         "ef":            [],     # [("Bank", "Chase", 11995.54)]
         "warnings":      [],
     }
@@ -93,6 +94,11 @@ def parse(text: str) -> dict:
         m = re.match(r"\[SGOV\] (.+): \$([0-9.]+)", line_s)
         if m:
             data["sgov"].append((m.group(1), float(m.group(2))))
+
+        # [Cash] Robinhood IRA (...8051): $2624.84
+        m = re.match(r"\[Cash\] (.+): \$([0-9.]+)", line_s)
+        if m:
+            data["uninvested_cash"].append((m.group(1), float(m.group(2))))
 
         # [EF] Bank|Chase: $11995.54
         m = re.match(r"\[EF\] ([^|]+)\|([^:]+): \$([0-9.]+)", line_s)
@@ -248,6 +254,20 @@ def build_html(data: dict) -> str:
                       f'</tr>')
         sgov_section = _changes_section("SGOV (0–3M Treasury)", sgov_rows)
 
+    # Uninvested cash breakdown
+    uninvested_section = ""
+    if data["uninvested_cash"]:
+        cash_rows = ""
+        total_uninvested = 0.0
+        for name, value in sorted(data["uninvested_cash"], key=lambda x: -x[1]):
+            total_uninvested += value
+            cash_rows += _sgov_row(name, f"${value:,.0f}")
+        cash_rows += (f'\n      <tr style="border-top:1px solid #f0f0f0;">'
+                      f'<td style="padding:5px 0 2px;font-size:12px;font-weight:600;">Total</td>'
+                      f'<td style="padding:5px 0 2px;font-size:12px;text-align:right;font-family:monospace;font-weight:600;">${total_uninvested:,.0f}</td>'
+                      f'</tr>')
+        uninvested_section = _changes_section(f"Uninvested Cash — deploy into SGOV", cash_rows)
+
     # Liquid Reserves breakdown — grouped by category
     ef_section = ""
     if data["ef"]:
@@ -287,7 +307,7 @@ def build_html(data: dict) -> str:
       <span style="font-size:18px;font-weight:600;">{emoji} Portfolio sync</span>
       <span style="color:#888;margin-left:8px;font-size:13px;">{date_str}</span>
       {f'<div style="margin-top:8px;font-size:26px;font-weight:700;letter-spacing:-0.5px;">{data["net_worth"]}<span style="font-size:13px;font-weight:400;color:#888;margin-left:6px;">net worth</span></div>' if data["net_worth"] else ""}
-    </div>{warning_html}{summary_html}{_group_header("Portfolio Changes") if us_section or indian_section else ""}{us_section}{indian_section}{_group_header("Cash & Liquidity") if margin_section or sgov_section or ef_section else ""}{margin_section}{sgov_section}{ef_section}{footer_html}
+    </div>{warning_html}{summary_html}{_group_header("Portfolio Changes") if us_section or indian_section else ""}{us_section}{indian_section}{_group_header("Cash & Liquidity") if margin_section or sgov_section or uninvested_section or ef_section else ""}{margin_section}{sgov_section}{uninvested_section}{ef_section}{footer_html}
   </div>
   <p style="text-align:center;color:#ccc;font-size:11px;margin-top:8px;">portfolio-sync · GitHub Actions</p>
 </div>

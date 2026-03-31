@@ -415,7 +415,43 @@ def print_pf_summary() -> None:
     print(f"PF Summary: {' | '.join(parts)}")
 
 
-# ── Step 5b: Print Emergency Fund breakdown ───────────────────────────────────
+# ── Step 5b: Print uninvested cash breakdown ──────────────────────────────────
+_UNINVESTED_TICKERS = {"CUR:USD", "FCASH", "FDRXX", "SPAXX"}
+
+
+def print_uninvested_cash(token: str) -> None:
+    """Print per-account uninvested cash as structured log lines (>= $1 only)."""
+    accounts = get_monarch_accounts(token)
+    brokerage_accounts = [
+        a for a in accounts
+        if a.get("type", {}).get("name") == "brokerage" and not a.get("deactivatedAt")
+    ]
+
+    for acct in brokerage_accounts:
+        account_id = acct["id"]
+        name = acct.get("displayName", account_id)
+        payload = json.dumps({
+            "query": _SGOV_HOLDINGS_QUERY,
+            "variables": {"accountId": account_id},
+        }).encode()
+        result = monarch_request(token, payload)
+        edges = (
+            result.get("data", {})
+            .get("portfolio", {})
+            .get("aggregateHoldings", {})
+            .get("edges", [])
+        )
+        for edge in edges:
+            node = edge.get("node", {})
+            for holding in node.get("holdings", []):
+                if holding.get("ticker") in _UNINVESTED_TICKERS:
+                    value = node.get("totalValue", 0.0) or 0.0
+                    if value >= 1.0:
+                        print(f"[Cash] {name}: ${value:.2f}")
+                    break
+
+
+# ── Step 5c: Print Emergency Fund breakdown ───────────────────────────────────
 def print_ef_breakdown(balances: dict[int, float]) -> None:
     """Emit [EF] log lines for each matched account in SHEET_ACCOUNTS."""
     for i, entry in enumerate(SHEET_ACCOUNTS):
@@ -446,6 +482,9 @@ if __name__ == "__main__":
     print("Fetching SGOV holdings from Monarch...")
     sgov_total = print_sgov_breakdown(token)
     print(f"  SGOV total: {sgov_total:,.4f} shares")
+
+    print("Fetching uninvested cash from Monarch...")
+    print_uninvested_cash(token)
 
     print("Writing to Google Sheets...")
     update_google_sheet(balances, sgov_total)
