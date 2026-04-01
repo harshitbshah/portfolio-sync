@@ -45,7 +45,7 @@ def get_kite_cash() -> float:
     data = r.json()
     if data.get("status") != "success":
         raise RuntimeError(f"Kite margins fetch failed: {data.get('message')}")
-    return float(data.get("data", {}).get("equity", {}).get("available", {}).get("cash", 0.0))
+    return float(data.get("data", {}).get("equity", {}).get("available", {}).get("live_balance", 0.0))
 
 
 def get_kite_holdings() -> dict[str, int]:
