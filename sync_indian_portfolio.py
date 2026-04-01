@@ -49,7 +49,7 @@ def get_kite_cash() -> float:
 
 
 def get_kite_holdings() -> dict[str, int]:
-    """Return {tradingsymbol: quantity} for all settled DEMAT holdings."""
+    """Return {tradingsymbol: quantity} for all settled + T1 DEMAT holdings."""
     r = requests.get(
         "https://kite.zerodha.com/oms/portfolio/holdings",
         headers={"Authorization": f"enctoken {KITE_ACCESS_TOKEN}"},
@@ -63,6 +63,30 @@ def get_kite_holdings() -> dict[str, int]:
         h["tradingsymbol"]: int(h["quantity"]) + int(h.get("t1_quantity", 0))
         for h in data.get("data", [])
         if int(h.get("quantity", 0)) + int(h.get("t1_quantity", 0)) > 0
+    }
+
+
+def get_kite_positions() -> dict[str, int]:
+    """Return {tradingsymbol: quantity} for today's CNC buys not yet in holdings.
+
+    Uses the 'net' bucket to avoid duplicates (Kite returns both 'day' and 'net').
+    Only includes positions with overnight_quantity == 0 (bought today for the first time).
+    """
+    r = requests.get(
+        "https://kite.zerodha.com/oms/portfolio/positions",
+        headers={"Authorization": f"enctoken {KITE_ACCESS_TOKEN}"},
+        timeout=15,
+    )
+    r.raise_for_status()
+    data = r.json()
+    if data.get("status") != "success":
+        raise RuntimeError(f"Kite positions fetch failed: {data.get('message')}")
+    return {
+        p["tradingsymbol"]: int(p["quantity"])
+        for p in data.get("data", {}).get("net", [])
+        if p.get("product") == "CNC"
+        and int(p.get("overnight_quantity", 0)) == 0
+        and int(p.get("quantity", 0)) > 0
     }
 
 
@@ -215,7 +239,20 @@ def update_quantities(
 def sync() -> None:
     print("Fetching holdings from Kite (Zerodha)...")
     holdings = get_kite_holdings()
-    print(f"  {len(holdings)} positions: {sorted(holdings.keys())}")
+    print(f"  {len(holdings)} settled/T1 holdings: {sorted(holdings.keys())}")
+
+    print("Fetching today's CNC positions from Kite...")
+    positions = get_kite_positions()
+    if positions:
+        print(f"  {len(positions)} intraday CNC buys: {sorted(positions.keys())}")
+        for ticker, qty in positions.items():
+            if ticker in holdings:
+                holdings[ticker] += qty
+            else:
+                holdings[ticker] = qty
+    else:
+        print("  No intraday CNC buys today.")
+    print(f"  {len(holdings)} total positions: {sorted(holdings.keys())}")
 
     print(f"\nReading tickers from '{INDIAN_PORTFOLIO_TAB}' tab...")
     sheet_holdings = get_sheet_holdings()
