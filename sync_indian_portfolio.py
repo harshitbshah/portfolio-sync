@@ -60,9 +60,9 @@ def get_kite_holdings() -> dict[str, int]:
     if data.get("status") != "success":
         raise RuntimeError(f"Kite holdings fetch failed: {data.get('message')}")
     return {
-        h["tradingsymbol"]: int(h["quantity"])
+        h["tradingsymbol"]: int(h["quantity"]) + int(h.get("t1_quantity", 0))
         for h in data.get("data", [])
-        if int(h.get("quantity", 0)) > 0
+        if int(h.get("quantity", 0)) + int(h.get("t1_quantity", 0)) > 0
     }
 
 
