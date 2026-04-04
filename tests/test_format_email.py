@@ -187,6 +187,19 @@ class TestParse:
         ppf_vals = [bal for cat, inst, bal in data["ef"] if cat == "PPF"]
         assert ppf_vals == [pytest.approx(2269.00)]
 
+    def test_parses_home_value(self):
+        log = "[Home] Value: $732,000.00\n[Home] Mortgage: $393,584.94\n[Home] Equity: $338,415.06\n"
+        data = fe.parse(log)
+        assert data["home_value"] == pytest.approx(732000.0)
+        assert data["home_mortgage"] == pytest.approx(393584.94)
+        assert data["home_equity"] == pytest.approx(338415.06)
+
+    def test_home_none_when_absent(self):
+        data = fe.parse("")
+        assert data["home_value"] is None
+        assert data["home_mortgage"] is None
+        assert data["home_equity"] is None
+
     def test_empty_log_gives_safe_defaults(self):
         data = fe.parse("")
         assert data["run_url"] is None
@@ -204,6 +217,9 @@ class TestParse:
         assert data["sgov"] == []
         assert data["ef"] == []
         assert data["warnings"] == []
+        assert data["home_value"] is None
+        assert data["home_mortgage"] is None
+        assert data["home_equity"] is None
 
 
 # ── build_subject() ───────────────────────────────────────────────────────────
@@ -223,6 +239,9 @@ class TestBuildSubject:
             "sgov": [],
             "uninvested_cash": [],
             "ef": [],
+            "home_value": None,
+            "home_mortgage": None,
+            "home_equity": None,
             "warnings": [],
         }
         base.update(kw)
@@ -271,6 +290,9 @@ class TestBuildHtml:
             "sgov": [],
             "uninvested_cash": [],
             "ef": [],
+            "home_value": None,
+            "home_mortgage": None,
+            "home_equity": None,
             "warnings": [],
         }
         base.update(kw)

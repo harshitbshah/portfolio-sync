@@ -25,6 +25,9 @@ def parse(text: str) -> dict:
         "sgov":          [],     # [("Robinhood individual (...8902)", 56.76)]
         "uninvested_cash": [],   # [("Robinhood IRA (...8051)", 2624.84)]
         "ef":            [],     # [("Bank", "Chase", 11995.54)]
+        "home_value":    None,   # 732000.0
+        "home_mortgage": None,   # 393584.94
+        "home_equity":   None,   # 338415.06
         "warnings":      [],
     }
 
@@ -104,6 +107,21 @@ def parse(text: str) -> dict:
         m = re.match(r"\[EF\] ([^|]+)\|([^:]+): \$([0-9.]+)", line_s)
         if m:
             data["ef"].append((m.group(1), m.group(2), float(m.group(3))))
+
+        # [Home] Value: $732,000.00
+        m = re.match(r"\[Home\] Value: \$([0-9,]+\.\d+)", line_s)
+        if m:
+            data["home_value"] = float(m.group(1).replace(",", ""))
+
+        # [Home] Mortgage: $393,584.94
+        m = re.match(r"\[Home\] Mortgage: \$([0-9,]+\.\d+)", line_s)
+        if m:
+            data["home_mortgage"] = float(m.group(1).replace(",", ""))
+
+        # [Home] Equity: $338,415.06
+        m = re.match(r"\[Home\] Equity: \$([0-9,]+\.\d+)", line_s)
+        if m:
+            data["home_equity"] = float(m.group(1).replace(",", ""))
 
         if re.match(r"(WARNING|ERROR):", line_s):
             data["warnings"].append(line_s)
@@ -290,6 +308,19 @@ def build_html(data: dict) -> str:
                     f'</tr>')
         ef_section = _changes_section("Liquid Reserves", ef_rows)
 
+    # Real Estate
+    home_section = ""
+    if data["home_value"] is not None:
+        home_rows = _sgov_row("Zillow estimate", f'${data["home_value"]:,.0f}')
+        if data["home_mortgage"] is not None:
+            home_rows += _sgov_row("Mortgage", f'−${data["home_mortgage"]:,.0f}')
+        if data["home_equity"] is not None:
+            home_rows += (f'\n      <tr style="border-top:1px solid #f0f0f0;">'
+                          f'<td style="padding:5px 0 2px;font-size:12px;font-weight:600;">Equity</td>'
+                          f'<td style="padding:5px 0 2px;font-size:12px;text-align:right;font-family:monospace;font-weight:600;">${data["home_equity"]:,.0f}</td>'
+                          f'</tr>')
+        home_section = _changes_section("Real Estate", home_rows)
+
     # Footer
     footer_html = ""
     if data["run_url"]:
@@ -307,7 +338,7 @@ def build_html(data: dict) -> str:
       <span style="font-size:18px;font-weight:600;">{emoji} Portfolio sync</span>
       <span style="color:#888;margin-left:8px;font-size:13px;">{date_str}</span>
       {f'<div style="margin-top:8px;font-size:26px;font-weight:700;letter-spacing:-0.5px;">{data["net_worth"]}<span style="font-size:13px;font-weight:400;color:#888;margin-left:6px;">net worth</span></div>' if data["net_worth"] else ""}
-    </div>{warning_html}{summary_html}{_group_header("Portfolio Changes") if us_section or indian_section else ""}{us_section}{indian_section}{_group_header("Cash & Liquidity") if margin_section or sgov_section or uninvested_section or ef_section else ""}{margin_section}{sgov_section}{uninvested_section}{ef_section}{footer_html}
+    </div>{warning_html}{summary_html}{_group_header("Portfolio Changes") if us_section or indian_section else ""}{us_section}{indian_section}{_group_header("Cash & Liquidity") if margin_section or sgov_section or uninvested_section or ef_section else ""}{margin_section}{sgov_section}{uninvested_section}{ef_section}{_group_header("Real Estate") if home_section else ""}{home_section}{footer_html}
   </div>
   <p style="text-align:center;color:#ccc;font-size:11px;margin-top:8px;">portfolio-sync · GitHub Actions</p>
 </div>

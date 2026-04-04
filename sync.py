@@ -463,6 +463,29 @@ def print_ef_breakdown(balances: dict[int, float]) -> None:
         print(f"[EF] {category}|{institution}: ${balance:.2f}")
 
 
+# ── Step 5d: Print home value ─────────────────────────────────────────────────
+def print_home_value(token: str) -> None:
+    """Emit [Home] log lines for Zillow home value and mortgage."""
+    accounts = get_monarch_accounts(token)
+    home_value = None
+    mortgage = None
+    for acct in accounts:
+        if acct.get("deactivatedAt"):
+            continue
+        acct_type = (acct.get("type") or {}).get("name", "")
+        balance = acct.get("displayBalance") or 0.0
+        if acct_type == "real_estate" and balance > 0:
+            home_value = balance
+        elif acct_type == "loan":
+            mortgage = abs(balance)
+    if home_value is not None:
+        print(f"[Home] Value: ${home_value:,.2f}")
+    if mortgage is not None:
+        print(f"[Home] Mortgage: ${mortgage:,.2f}")
+    if home_value is not None and mortgage is not None:
+        print(f"[Home] Equity: ${home_value - mortgage:,.2f}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     token = os.environ["MONARCH_TOKEN"]
@@ -491,6 +514,9 @@ if __name__ == "__main__":
 
     print("Emergency fund balances:")
     print_ef_breakdown(balances)
+
+    print("\nFetching home value from Monarch...")
+    print_home_value(token)
 
     print("\nFetching Monarch net worth...")
     print_net_worth(token)
