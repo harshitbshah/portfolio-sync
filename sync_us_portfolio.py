@@ -98,8 +98,16 @@ def _monarch_request(token: str, payload: bytes) -> dict:
             "User-Agent": "MonarchMoneyAPI (https://github.com/bradleyseanf/monarchmoneycommunity)",
         },
     )
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            if e.code in (502, 503, 504) and attempt < 2:
+                import time
+                time.sleep(10 * (attempt + 1))  # 10s, then 20s
+                continue
+            raise
 
 
 _ACCOUNTS_QUERY = "{ accounts { id deactivatedAt type { name } } }"
