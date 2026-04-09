@@ -20,6 +20,7 @@ def parse(text: str) -> dict:
         "indian_closed": [],     # ["WINDLAS"]
         "indian_new":    [],     # [("GPIL", "5804")]
         "us_closed":     [],     # ["ZS"]
+        "us_diffs":      [],     # [("HROW", "+5.0")]
         "us_new":        [],     # [("RKLB", "460.87")]
         "zerodha_margin": None,  # 12345.67
         "sgov":          [],     # [("Robinhood individual (...8902)", 56.76)]
@@ -87,6 +88,12 @@ def parse(text: str) -> dict:
         m = re.match(r"\[US\] Added: (\S+) \+(\S+)", line_s)
         if m:
             data["us_new"].append((m.group(1), m.group(2)))
+
+        # [US] Diff: HROW +5.000000
+        m = re.match(r"\[US\] Diff: (\S+) ([+-][0-9.]+)", line_s)
+        if m:
+            sign = "+" if m.group(2).startswith("+") else "−"
+            data["us_diffs"].append((m.group(1), f"{sign}{m.group(2).lstrip('+-')}"))
 
         # [Indian] Margin: 12345.67
         m = re.match(r"\[Indian\] Margin: (-?[0-9.]+)", line_s)
@@ -230,6 +237,9 @@ def build_html(data: dict) -> str:
 
     # US PF changes
     us_rows = ""
+    for ticker, diff in data["us_diffs"]:
+        color = "#16a34a" if diff.startswith("+") else "#dc2626"
+        us_rows += _change_row(ticker, f'<span style="color:{color};font-weight:600;">{diff}</span>')
     for ticker in data["us_closed"]:
         us_rows += _change_row(ticker, _pill("exited", "#dc2626", "#fee2e2"))
     for ticker, qty in data["us_new"]:

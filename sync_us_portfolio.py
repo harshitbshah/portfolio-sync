@@ -110,7 +110,7 @@ def _monarch_request(token: str, payload: bytes) -> dict:
             raise
 
 
-_ACCOUNTS_QUERY = "{ accounts { id deactivatedAt type { name } } }"
+_ACCOUNTS_QUERY = "{ accounts { id displayName deactivatedAt type { name } } }"
 
 _HOLDINGS_QUERY = """
 query GetHoldings($accountId: ID!) {
@@ -255,6 +255,79 @@ def insert_new_rows(
     ).execute()
 
 
+def _shorten_account_name(display_name: str) -> str:
+    """Strip trailing account mask like ' (...8902)' for a compact label."""
+    return re.sub(r'\s*\(\.\.\.[^)]*\)\s*$', '', display_name).strip() or display_name
+
+
+def get_holdings_by_account(token: str) -> dict[str, dict[str, float]]:
+    """Return {ticker: {account_short_name: qty}} across all active brokerage accounts."""
+    result = _monarch_request(token, json.dumps({"query": _ACCOUNTS_QUERY}).encode())
+    accounts = result.get("data", {}).get("accounts", [])
+    brokerage_accounts = [
+        a for a in accounts
+        if a.get("type", {}).get("name") == "brokerage" and not a.get("deactivatedAt")
+    ]
+
+    by_account: dict[str, dict[str, float]] = {}
+    for account in brokerage_accounts:
+        account_id = account["id"]
+        short_name = _shorten_account_name(account.get("displayName", account_id))
+        payload = json.dumps({
+            "query": _HOLDINGS_QUERY,
+            "variables": {"accountId": account_id},
+        }).encode()
+        data = _monarch_request(token, payload)
+        edges = (
+            data.get("data", {})
+            .get("portfolio", {})
+            .get("aggregateHoldings", {})
+            .get("edges", [])
+        )
+        for edge in edges:
+            node = edge.get("node", {})
+            qty = node.get("quantity") or 0.0
+            for holding in node.get("holdings", []):
+                ticker = holding.get("ticker")
+                if not ticker or ticker in _SKIP_TICKERS or not _TICKER_RE.match(ticker):
+                    continue
+                if ticker not in by_account:
+                    by_account[ticker] = {}
+                by_account[ticker][short_name] = by_account[ticker].get(short_name, 0.0) + qty
+
+    return by_account
+
+
+def _format_breakdown(account_qtys: dict[str, float]) -> str:
+    """Format per-account quantities as 'AcctA: 5 | AcctB: 10', sorted by account name."""
+    parts = [f"{acct}: {qty:g}" for acct, qty in sorted(account_qtys.items())]
+    return " | ".join(parts)
+
+
+def get_sheet_quantities() -> dict[str, float]:
+    """Return {ticker: quantity} for all equity rows currently in the sheet."""
+    service = _sheets_service(readonly=True)
+    result = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=SHEET_ID, range=f"'{US_PORTFOLIO_TAB}'!B:D")
+        .execute()
+    )
+    rows = result.get("values", [])
+    quantities = {}
+    for i, row in enumerate(rows):
+        if i == 0:
+            continue  # header
+        ticker = row[0].strip() if row else ""
+        if not _TICKER_RE.match(ticker):
+            continue
+        try:
+            quantities[ticker] = float(row[2]) if len(row) > 2 else 0.0
+        except (ValueError, TypeError):
+            quantities[ticker] = 0.0
+    return quantities
+
+
 def update_quantities(
     to_update: set[str],
     holdings: dict[str, float],
@@ -272,6 +345,30 @@ def update_quantities(
     _sheets_service(readonly=False).spreadsheets().values().batchUpdate(
         spreadsheetId=SHEET_ID,
         body={"valueInputOption": "RAW", "data": value_data},
+    ).execute()
+
+
+def write_breakdowns(
+    breakdown: dict[str, dict[str, float]],
+    sheet_tickers: list[tuple[int, str]],
+) -> None:
+    """Write per-account breakdown text to column G for all tickers in the sheet."""
+    ticker_to_row = {ticker: row for row, ticker in sheet_tickers}
+    value_data = []
+    for ticker, account_qtys in sorted(breakdown.items()):
+        if ticker not in ticker_to_row:
+            continue
+        row = ticker_to_row[ticker]
+        value_data.append({
+            "range": f"'{US_PORTFOLIO_TAB}'!G{row}",
+            "values": [[_format_breakdown(account_qtys)]],
+        })
+    if not value_data:
+        return
+    header = [{"range": f"'{US_PORTFOLIO_TAB}'!G1", "values": [["By Account"]]}]
+    _sheets_service(readonly=False).spreadsheets().values().batchUpdate(
+        spreadsheetId=SHEET_ID,
+        body={"valueInputOption": "RAW", "data": header + value_data},
     ).execute()
 
 
@@ -317,10 +414,24 @@ def sync(token: str) -> None:
 
     # ── Step 3: Update existing quantities ───────────────────────────────────
     print(f"\nUpdating {len(to_update)} existing positions...")
-    update_quantities(to_update, holdings, sheet_tickers)
-    ticker_to_row = {ticker: row for row, ticker in sheet_tickers}
-    for ticker in sorted(to_update):
-        print(f"  {ticker:6s} → D{ticker_to_row[ticker]}: {holdings[ticker]:,.4f}")
+    if to_update:
+        old_quantities = get_sheet_quantities()
+        update_quantities(to_update, holdings, sheet_tickers)
+        ticker_to_row = {ticker: row for row, ticker in sheet_tickers}
+        for ticker in sorted(to_update):
+            new_qty = round(holdings[ticker], 6)
+            old_qty = round(old_quantities.get(ticker, 0.0), 6)
+            diff = round(new_qty - old_qty, 6)
+            print(f"  {ticker:6s} → D{ticker_to_row[ticker]}: {holdings[ticker]:,.4f}")
+            if diff != 0:
+                sign = "+" if diff >= 0 else ""
+                print(f"[US] Diff: {ticker} {sign}{diff}")
+
+    # ── Step 4: Write per-account breakdown to column G ──────────────────────
+    print("\nFetching per-account breakdown...")
+    breakdown = get_holdings_by_account(token)
+    write_breakdowns(breakdown, sheet_tickers)
+    print(f"  Wrote breakdown for {len(breakdown)} tickers.")
 
     print(f"\nDone. Updated {len(to_update)}, removed {len(to_remove)}, added {len(to_add)}.")
 

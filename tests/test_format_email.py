@@ -140,6 +140,23 @@ class TestParse:
         data = fe.parse(log)
         assert data["us_new"] == [("RKLB", "460.870000")]
 
+    def test_parses_us_diffs(self):
+        log = "[US] Diff: HROW +5.000000\n[US] Diff: TSLA -10.5\n"
+        data = fe.parse(log)
+        tickers = [t for t, _ in data["us_diffs"]]
+        assert "HROW" in tickers
+        assert "TSLA" in tickers
+
+    def test_us_diff_sign(self):
+        log = "[US] Diff: HROW +5.000000\n[US] Diff: TSLA -10.5\n"
+        data = fe.parse(log)
+        diff_map = {t: v for t, v in data["us_diffs"]}
+        assert diff_map["HROW"] == "+5.000000"
+        assert diff_map["TSLA"] == "−10.5"
+
+    def test_us_diffs_empty_when_absent(self):
+        assert fe.parse("")["us_diffs"] == []
+
     def test_parses_warning_line(self):
         data = fe.parse(WARNING_LOG)
         assert len(data["warnings"]) == 1
@@ -213,6 +230,7 @@ class TestParse:
         assert data["indian_closed"] == []
         assert data["indian_new"] == []
         assert data["us_closed"] == []
+        assert data["us_diffs"] == []
         assert data["us_new"] == []
         assert data["sgov"] == []
         assert data["ef"] == []
@@ -235,6 +253,7 @@ class TestBuildSubject:
             "indian_closed": [],
             "indian_new": [],
             "us_closed": [],
+            "us_diffs": [],
             "us_new": [],
             "sgov": [],
             "uninvested_cash": [],
@@ -286,6 +305,7 @@ class TestBuildHtml:
             "indian_closed": [],
             "indian_new": [],
             "us_closed": [],
+            "us_diffs": [],
             "us_new": [],
             "sgov": [],
             "uninvested_cash": [],
@@ -357,6 +377,16 @@ class TestBuildHtml:
         html = fe.build_html(self._quiet(us_new=[("RKLB", "460.87")]))
         assert "RKLB" in html
         assert "460.87" in html
+
+    def test_us_diff_shown(self):
+        html = fe.build_html(self._quiet(us_diffs=[("HROW", "+5.0")]))
+        assert "HROW" in html
+        assert "+5.0" in html
+
+    def test_us_diff_negative_shown(self):
+        html = fe.build_html(self._quiet(us_diffs=[("TSLA", "−10.5")]))
+        assert "TSLA" in html
+        assert "−10.5" in html
 
     def test_html_starts_with_doctype(self):
         html = fe.build_html(self._quiet())
