@@ -307,11 +307,13 @@ class TestSyncAccountTab:
         assert rows[1] == ["AAPL", "Individual", 10.0]
         assert rows[2] == ["MSFT", "IRA", 3.0]
 
-    def test_clears_before_writing(self):
+    def test_clears_only_columns_a_to_c(self):
         mock_svc = self._make_svc()
         with patch("sync_us_portfolio._sheets_service", return_value=mock_svc):
             usp.sync_account_tab({"AAPL": {"IRA": 5.0}})
-        mock_svc.spreadsheets.return_value.values.return_value.clear.assert_called_once()
+        clear_call = mock_svc.spreadsheets.return_value.values.return_value.clear
+        clear_call.assert_called_once()
+        assert "A:C" in clear_call.call_args[1]["range"]
 
     def test_creates_tab_if_missing(self):
         mock_svc = self._make_svc(existing_tabs=["US Portfolio"])

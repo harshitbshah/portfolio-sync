@@ -365,7 +365,7 @@ def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
 
     service.spreadsheets().values().clear(
         spreadsheetId=SHEET_ID,
-        range=f"'{ACCOUNT_TAB}'",
+        range=f"'{ACCOUNT_TAB}'!A:C",
     ).execute()
 
     service.spreadsheets().values().update(
