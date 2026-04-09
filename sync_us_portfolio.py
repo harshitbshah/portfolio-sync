@@ -495,7 +495,7 @@ def sync(token: str) -> None:
             print(f"  {ticker:6s} → D{ticker_to_row[ticker]}: {holdings[ticker]:,.4f}")
             if abs(diff) >= _MIN_REPORTABLE_DIFF:
                 sign = "+" if diff >= 0 else ""
-                print(f"[US] Diff: {ticker} {sign}{diff}")
+                print(f"[US] Diff: {ticker} {sign}{diff:.2f}")
 
     # ── Step 4: Sync Holdings by Account tab ─────────────────────────────────
     print("\nFetching per-account breakdown...")

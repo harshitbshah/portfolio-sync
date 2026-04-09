@@ -317,7 +317,7 @@ class TestSync:
             sheet_tickers=[(2, "HROW")],
             old_quantities={"HROW": 10.0},
         )
-        assert "[US] Diff: HROW +5.0" in capsys.readouterr().out
+        assert "[US] Diff: HROW +5.00" in capsys.readouterr().out
 
     def test_emits_diff_for_quantity_decrease(self, capsys):
         self._run(
@@ -325,7 +325,7 @@ class TestSync:
             sheet_tickers=[(2, "HROW")],
             old_quantities={"HROW": 10.0},
         )
-        assert "[US] Diff: HROW -5.0" in capsys.readouterr().out
+        assert "[US] Diff: HROW -5.00" in capsys.readouterr().out
 
     def test_no_diff_when_quantity_unchanged(self, capsys):
         self._run(
