@@ -216,6 +216,24 @@ class TestGetOrCreateTab:
         assert result == 99
         mock_svc.spreadsheets.return_value.batchUpdate.assert_called_once()
 
+    def test_recovers_when_create_fails_with_already_exists(self):
+        from googleapiclient.errors import HttpError
+        mock_svc = MagicMock()
+        # First get returns no matching tab, create fails, second get finds it
+        mock_svc.spreadsheets.return_value.get.return_value.execute.side_effect = [
+            self._meta_resp(["US Portfolio"]),
+            self._meta_resp(["US Portfolio", "Holdings by Account"]),
+        ]
+        already_exists_err = HttpError(
+            resp=MagicMock(status=400),
+            content=b'{"error":{"message":"already exists"}}',
+        )
+        mock_svc.spreadsheets.return_value.batchUpdate.return_value.execute.side_effect = (
+            already_exists_err
+        )
+        result = usp._get_or_create_tab(mock_svc, "Holdings by Account")
+        assert result == 11  # second tab in second meta_resp
+
 
 # ── sync_account_tab() ────────────────────────────────────────────────────────
 

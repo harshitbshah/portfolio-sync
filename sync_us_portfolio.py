@@ -26,6 +26,7 @@ from collections import defaultdict
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 SHEET_ID = os.environ["GSHEET_SHEET_ID"]
 US_PORTFOLIO_TAB = os.getenv("US_PORTFOLIO_TAB", "US Portfolio")
@@ -304,18 +305,38 @@ def get_holdings_by_account(token: str) -> dict[str, dict[str, float]]:
 
 def _get_or_create_tab(service, tab_name: str) -> int:
     """Return the sheetId for tab_name, creating it if it doesn't exist."""
+    def _find_in_meta(meta):
+        for sheet in meta.get("sheets", []):
+            if sheet["properties"]["title"].strip() == tab_name.strip():
+                return sheet["properties"]["sheetId"]
+        return None
+
     meta = service.spreadsheets().get(
         spreadsheetId=SHEET_ID,
         fields="sheets.properties",
     ).execute()
-    for sheet in meta["sheets"]:
-        if sheet["properties"]["title"] == tab_name:
-            return sheet["properties"]["sheetId"]
-    resp = service.spreadsheets().batchUpdate(
-        spreadsheetId=SHEET_ID,
-        body={"requests": [{"addSheet": {"properties": {"title": tab_name}}}]},
-    ).execute()
-    return resp["replies"][0]["addSheet"]["properties"]["sheetId"]
+    sheet_id = _find_in_meta(meta)
+    if sheet_id is not None:
+        return sheet_id
+
+    try:
+        resp = service.spreadsheets().batchUpdate(
+            spreadsheetId=SHEET_ID,
+            body={"requests": [{"addSheet": {"properties": {"title": tab_name}}}]},
+        ).execute()
+        return resp["replies"][0]["addSheet"]["properties"]["sheetId"]
+    except HttpError as e:
+        if "already exists" not in str(e):
+            raise
+        # Tab exists but wasn't matched (encoding/whitespace mismatch) — re-fetch
+        meta = service.spreadsheets().get(
+            spreadsheetId=SHEET_ID,
+            fields="sheets.properties",
+        ).execute()
+        sheet_id = _find_in_meta(meta)
+        if sheet_id is not None:
+            return sheet_id
+        raise ValueError(f"Tab '{tab_name}' reported as existing but not found in metadata") from e
 
 
 def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
