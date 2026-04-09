@@ -29,6 +29,7 @@ from googleapiclient.discovery import build
 
 SHEET_ID = os.environ["GSHEET_SHEET_ID"]
 US_PORTFOLIO_TAB = os.getenv("US_PORTFOLIO_TAB", "US Portfolio")
+ACCOUNT_TAB = os.getenv("ACCOUNT_BREAKDOWN_TAB", "Holdings by Account")
 
 _TICKER_RE = re.compile(r"^[A-Z]{1,5}$")
 
@@ -298,10 +299,65 @@ def get_holdings_by_account(token: str) -> dict[str, dict[str, float]]:
     return by_account
 
 
-def _format_breakdown(account_qtys: dict[str, float]) -> str:
-    """Format per-account quantities as 'AcctA: 5 | AcctB: 10', sorted by account name."""
-    parts = [f"{acct}: {qty:g}" for acct, qty in sorted(account_qtys.items())]
-    return " | ".join(parts)
+def _get_or_create_tab(service, tab_name: str) -> int:
+    """Return the sheetId for tab_name, creating it if it doesn't exist."""
+    meta = service.spreadsheets().get(
+        spreadsheetId=SHEET_ID,
+        fields="sheets.properties",
+    ).execute()
+    for sheet in meta["sheets"]:
+        if sheet["properties"]["title"] == tab_name:
+            return sheet["properties"]["sheetId"]
+    resp = service.spreadsheets().batchUpdate(
+        spreadsheetId=SHEET_ID,
+        body={"requests": [{"addSheet": {"properties": {"title": tab_name}}}]},
+    ).execute()
+    return resp["replies"][0]["addSheet"]["properties"]["sheetId"]
+
+
+def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
+    """Overwrite the Holdings by Account tab with a flat ticker/account/qty table."""
+    rows = []
+    for ticker in sorted(breakdown):
+        for account in sorted(breakdown[ticker]):
+            rows.append([ticker, account, breakdown[ticker][account]])
+
+    service = _sheets_service(readonly=False)
+    sheet_id = _get_or_create_tab(service, ACCOUNT_TAB)
+
+    service.spreadsheets().values().clear(
+        spreadsheetId=SHEET_ID,
+        range=f"'{ACCOUNT_TAB}'",
+    ).execute()
+
+    service.spreadsheets().values().update(
+        spreadsheetId=SHEET_ID,
+        range=f"'{ACCOUNT_TAB}'!A1",
+        valueInputOption="RAW",
+        body={"values": [["Ticker", "Account", "Qty"]] + rows},
+    ).execute()
+
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=SHEET_ID,
+        body={"requests": [
+            {
+                "repeatCell": {
+                    "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1},
+                    "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
+                    "fields": "userEnteredFormat.textFormat.bold",
+                },
+            },
+            {
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": sheet_id,
+                        "gridProperties": {"frozenRowCount": 1},
+                    },
+                    "fields": "gridProperties.frozenRowCount",
+                },
+            },
+        ]},
+    ).execute()
 
 
 def get_sheet_quantities() -> dict[str, float]:
@@ -345,30 +401,6 @@ def update_quantities(
     _sheets_service(readonly=False).spreadsheets().values().batchUpdate(
         spreadsheetId=SHEET_ID,
         body={"valueInputOption": "RAW", "data": value_data},
-    ).execute()
-
-
-def write_breakdowns(
-    breakdown: dict[str, dict[str, float]],
-    sheet_tickers: list[tuple[int, str]],
-) -> None:
-    """Write per-account breakdown text to column G for all tickers in the sheet."""
-    ticker_to_row = {ticker: row for row, ticker in sheet_tickers}
-    value_data = []
-    for ticker, account_qtys in sorted(breakdown.items()):
-        if ticker not in ticker_to_row:
-            continue
-        row = ticker_to_row[ticker]
-        value_data.append({
-            "range": f"'{US_PORTFOLIO_TAB}'!G{row}",
-            "values": [[_format_breakdown(account_qtys)]],
-        })
-    if not value_data:
-        return
-    header = [{"range": f"'{US_PORTFOLIO_TAB}'!G1", "values": [["By Account"]]}]
-    _sheets_service(readonly=False).spreadsheets().values().batchUpdate(
-        spreadsheetId=SHEET_ID,
-        body={"valueInputOption": "RAW", "data": header + value_data},
     ).execute()
 
 
@@ -427,11 +459,11 @@ def sync(token: str) -> None:
                 sign = "+" if diff >= 0 else ""
                 print(f"[US] Diff: {ticker} {sign}{diff}")
 
-    # ── Step 4: Write per-account breakdown to column G ──────────────────────
+    # ── Step 4: Sync Holdings by Account tab ─────────────────────────────────
     print("\nFetching per-account breakdown...")
     breakdown = get_holdings_by_account(token)
-    write_breakdowns(breakdown, sheet_tickers)
-    print(f"  Wrote breakdown for {len(breakdown)} tickers.")
+    sync_account_tab(breakdown)
+    print(f"  Wrote {sum(len(v) for v in breakdown.values())} rows to '{ACCOUNT_TAB}'.")
 
     print(f"\nDone. Updated {len(to_update)}, removed {len(to_remove)}, added {len(to_add)}.")
 

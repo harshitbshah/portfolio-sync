@@ -190,66 +190,91 @@ class TestGetHoldingsByAccount:
         assert "AAPL" in result
 
 
-# ── _format_breakdown() ───────────────────────────────────────────────────────
+# ── _get_or_create_tab() ─────────────────────────────────────────────────────
 
-class TestFormatBreakdown:
-    def test_single_account(self):
-        assert usp._format_breakdown({"Robinhood IRA": 5.0}) == "Robinhood IRA: 5"
+class TestGetOrCreateTab:
+    def _meta_resp(self, titles):
+        return {"sheets": [{"properties": {"title": t, "sheetId": i + 10}} for i, t in enumerate(titles)]}
 
-    def test_multiple_accounts_sorted_alphabetically(self):
-        result = usp._format_breakdown({"Individual": 10.0, "IRA": 5.0})
-        assert result == "IRA: 5 | Individual: 10"
-
-    def test_fractional_qty_shows_decimal(self):
-        assert usp._format_breakdown({"IRA": 5.5}) == "IRA: 5.5"
-
-    def test_whole_qty_no_trailing_zero(self):
-        assert usp._format_breakdown({"IRA": 10.0}) == "IRA: 10"
-
-
-# ── write_breakdowns() ────────────────────────────────────────────────────────
-
-class TestWriteBreakdowns:
-    def test_writes_correct_range_and_value(self):
+    def test_returns_existing_sheet_id(self):
         mock_svc = MagicMock()
-        with patch("sync_us_portfolio._sheets_service", return_value=mock_svc):
-            usp.write_breakdowns(
-                {"HROW": {"IRA": 5.0, "Individual": 10.0}},
-                [(2, "HROW")],
-            )
-        batch_call = mock_svc.spreadsheets.return_value.values.return_value.batchUpdate
-        body = batch_call.call_args[1]["body"]
-        ranges = [d["range"] for d in body["data"]]
-        assert any("G2" in r for r in ranges)
-        values = {d["range"]: d["values"][0][0] for d in body["data"] if "G2" in d["range"]}
-        assert values[f"'US Portfolio'!G2"] == "IRA: 5 | Individual: 10"
+        mock_svc.spreadsheets.return_value.get.return_value.execute.return_value = (
+            self._meta_resp(["US Portfolio", "Holdings by Account"])
+        )
+        result = usp._get_or_create_tab(mock_svc, "Holdings by Account")
+        assert result == 11  # second tab → sheetId 11
 
-    def test_writes_header_on_g1(self):
+    def test_creates_tab_when_missing(self):
         mock_svc = MagicMock()
-        with patch("sync_us_portfolio._sheets_service", return_value=mock_svc):
-            usp.write_breakdowns({"AAPL": {"IRA": 5.0}}, [(2, "AAPL")])
-        batch_call = mock_svc.spreadsheets.return_value.values.return_value.batchUpdate
-        body = batch_call.call_args[1]["body"]
-        header_entry = next(d for d in body["data"] if "G1" in d["range"])
-        assert header_entry["values"] == [["By Account"]]
+        mock_svc.spreadsheets.return_value.get.return_value.execute.return_value = (
+            self._meta_resp(["US Portfolio"])
+        )
+        mock_svc.spreadsheets.return_value.batchUpdate.return_value.execute.return_value = {
+            "replies": [{"addSheet": {"properties": {"sheetId": 99}}}]
+        }
+        result = usp._get_or_create_tab(mock_svc, "Holdings by Account")
+        assert result == 99
+        mock_svc.spreadsheets.return_value.batchUpdate.assert_called_once()
 
-    def test_skips_tickers_not_in_sheet(self):
-        mock_svc = MagicMock()
-        with patch("sync_us_portfolio._sheets_service", return_value=mock_svc):
-            usp.write_breakdowns(
-                {"HROW": {"IRA": 5.0}, "AAPL": {"IRA": 10.0}},
-                [(2, "HROW")],  # AAPL not in sheet
-            )
-        batch_call = mock_svc.spreadsheets.return_value.values.return_value.batchUpdate
-        body = batch_call.call_args[1]["body"]
-        ranges = [d["range"] for d in body["data"]]
-        assert not any("AAPL" in r for r in ranges)
 
-    def test_no_api_call_when_no_overlap(self):
+# ── sync_account_tab() ────────────────────────────────────────────────────────
+
+class TestSyncAccountTab:
+    def _make_svc(self, existing_tabs=None):
         mock_svc = MagicMock()
+        titles = existing_tabs or ["Holdings by Account"]
+        mock_svc.spreadsheets.return_value.get.return_value.execute.return_value = {
+            "sheets": [{"properties": {"title": t, "sheetId": i}} for i, t in enumerate(titles)]
+        }
+        return mock_svc
+
+    def test_writes_header_row(self):
+        mock_svc = self._make_svc()
         with patch("sync_us_portfolio._sheets_service", return_value=mock_svc):
-            usp.write_breakdowns({"AAPL": {"IRA": 5.0}}, [])
-        mock_svc.spreadsheets.assert_not_called()
+            usp.sync_account_tab({"AAPL": {"Robinhood IRA": 5.0}})
+        update_call = mock_svc.spreadsheets.return_value.values.return_value.update
+        body = update_call.call_args[1]["body"]
+        assert body["values"][0] == ["Ticker", "Account", "Qty"]
+
+    def test_writes_rows_sorted_by_ticker_then_account(self):
+        mock_svc = self._make_svc()
+        with patch("sync_us_portfolio._sheets_service", return_value=mock_svc):
+            usp.sync_account_tab({
+                "MSFT": {"IRA": 3.0},
+                "AAPL": {"Individual": 10.0, "IRA": 5.0},
+            })
+        update_call = mock_svc.spreadsheets.return_value.values.return_value.update
+        body = update_call.call_args[1]["body"]
+        rows = body["values"][1:]  # skip header
+        assert rows[0] == ["AAPL", "IRA", 5.0]
+        assert rows[1] == ["AAPL", "Individual", 10.0]
+        assert rows[2] == ["MSFT", "IRA", 3.0]
+
+    def test_clears_before_writing(self):
+        mock_svc = self._make_svc()
+        with patch("sync_us_portfolio._sheets_service", return_value=mock_svc):
+            usp.sync_account_tab({"AAPL": {"IRA": 5.0}})
+        mock_svc.spreadsheets.return_value.values.return_value.clear.assert_called_once()
+
+    def test_creates_tab_if_missing(self):
+        mock_svc = self._make_svc(existing_tabs=["US Portfolio"])
+        mock_svc.spreadsheets.return_value.batchUpdate.return_value.execute.return_value = {
+            "replies": [{"addSheet": {"properties": {"sheetId": 42}}}]
+        }
+        with patch("sync_us_portfolio._sheets_service", return_value=mock_svc):
+            usp.sync_account_tab({"AAPL": {"IRA": 5.0}})
+        # batchUpdate called once for tab creation, once for header formatting
+        assert mock_svc.spreadsheets.return_value.batchUpdate.call_count == 2
+
+    def test_formats_header_bold_with_frozen_row(self):
+        mock_svc = self._make_svc()
+        with patch("sync_us_portfolio._sheets_service", return_value=mock_svc):
+            usp.sync_account_tab({"AAPL": {"IRA": 5.0}})
+        format_call = mock_svc.spreadsheets.return_value.batchUpdate
+        body = format_call.call_args[1]["body"]
+        request_types = [list(r.keys())[0] for r in body["requests"]]
+        assert "repeatCell" in request_types
+        assert "updateSheetProperties" in request_types
 
 
 # ── sync() ────────────────────────────────────────────────────────────────────
@@ -265,7 +290,7 @@ class TestSync:
              patch("sync_us_portfolio.insert_new_rows"), \
              patch("sync_us_portfolio.update_quantities"), \
              patch("sync_us_portfolio.get_holdings_by_account", return_value={}), \
-             patch("sync_us_portfolio.write_breakdowns"):
+             patch("sync_us_portfolio.sync_account_tab"):
             usp.sync("token")
 
     def test_emits_diff_for_quantity_increase(self, capsys):
@@ -306,14 +331,14 @@ class TestSync:
         )
         assert "[US] Closed: ZS" in capsys.readouterr().out
 
-    def test_calls_write_breakdowns(self):
+    def test_calls_sync_account_tab(self):
         breakdown = {"HROW": {"IRA": 5.0, "Individual": 10.0}}
         with patch("sync_us_portfolio.get_all_holdings", return_value={"HROW": 15.0}), \
              patch("sync_us_portfolio.get_sheet_tickers", return_value=[(2, "HROW")]), \
              patch("sync_us_portfolio.get_sheet_quantities", return_value={"HROW": 15.0}), \
              patch("sync_us_portfolio.update_quantities"), \
              patch("sync_us_portfolio.get_holdings_by_account", return_value=breakdown) as mock_gba, \
-             patch("sync_us_portfolio.write_breakdowns") as mock_wb:
+             patch("sync_us_portfolio.sync_account_tab") as mock_sat:
             usp.sync("token")
         mock_gba.assert_called_once_with("token")
-        mock_wb.assert_called_once_with(breakdown, ANY)
+        mock_sat.assert_called_once_with(breakdown)
