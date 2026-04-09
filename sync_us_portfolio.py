@@ -404,7 +404,11 @@ def get_sheet_quantities() -> dict[str, float]:
     result = (
         service.spreadsheets()
         .values()
-        .get(spreadsheetId=SHEET_ID, range=f"'{US_PORTFOLIO_TAB}'!B:D")
+        .get(
+            spreadsheetId=SHEET_ID,
+            range=f"'{US_PORTFOLIO_TAB}'!B:D",
+            valueRenderOption="UNFORMATTED_VALUE",
+        )
         .execute()
     )
     rows = result.get("values", [])

@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import MagicMock, patch, call, ANY
 
 import sync_us_portfolio as usp
@@ -13,6 +14,44 @@ def _mock_sheets_svc(rows):
 
 
 # ── get_sheet_tickers() ───────────────────────────────────────────────────────
+
+class TestGetSheetQuantities:
+    def _mock_svc(self, rows):
+        svc = MagicMock()
+        (svc.spreadsheets.return_value
+            .values.return_value
+            .get.return_value
+            .execute.return_value) = {"values": rows}
+        return svc
+
+    def test_reads_quantity_for_normal_position(self):
+        rows = [["Ticker", "% Portfolio", "Qty"], ["AAPL", 0.05, 82.4781]]
+        with patch("sync_us_portfolio._sheets_service", return_value=self._mock_svc(rows)):
+            result = usp.get_sheet_quantities()
+        assert result["AAPL"] == pytest.approx(82.4781)
+
+    def test_reads_quantity_for_large_position(self):
+        # Regression: FORMATTED_VALUE returns "1,021.03" which float() can't parse.
+        # UNFORMATTED_VALUE returns the raw number — this test ensures we use it.
+        rows = [["Ticker", "% Portfolio", "Qty"], ["DLO", 0.02, 1021.026989]]
+        with patch("sync_us_portfolio._sheets_service", return_value=self._mock_svc(rows)):
+            result = usp.get_sheet_quantities()
+        assert result["DLO"] == pytest.approx(1021.026989)
+
+    def test_returns_zero_for_missing_qty_column(self):
+        rows = [["Ticker", "% Portfolio", "Qty"], ["AAPL"]]  # no qty cell
+        with patch("sync_us_portfolio._sheets_service", return_value=self._mock_svc(rows)):
+            result = usp.get_sheet_quantities()
+        assert result["AAPL"] == 0.0
+
+    def test_uses_unformatted_value_render_option(self):
+        svc = self._mock_svc([])
+        with patch("sync_us_portfolio._sheets_service", return_value=svc):
+            usp.get_sheet_quantities()
+        get_call = svc.spreadsheets.return_value.values.return_value.get
+        kwargs = get_call.call_args[1]
+        assert kwargs.get("valueRenderOption") == "UNFORMATTED_VALUE"
+
 
 class TestGetSheetTickers:
     def test_returns_row_and_ticker_tuples(self):
