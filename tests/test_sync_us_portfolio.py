@@ -317,6 +317,23 @@ class TestSync:
         )
         assert "[US] Diff:" not in capsys.readouterr().out
 
+    def test_suppresses_diff_below_threshold(self, capsys):
+        # Floating-point noise from Monarch: diff of 0.002 should not be reported
+        self._run(
+            holdings={"ALAB": 100.002},
+            sheet_tickers=[(2, "ALAB")],
+            old_quantities={"ALAB": 100.0},
+        )
+        assert "[US] Diff:" not in capsys.readouterr().out
+
+    def test_reports_diff_at_threshold(self, capsys):
+        self._run(
+            holdings={"ALAB": 100.01},
+            sheet_tickers=[(2, "ALAB")],
+            old_quantities={"ALAB": 100.0},
+        )
+        assert "[US] Diff: ALAB" in capsys.readouterr().out
+
     def test_emits_added_for_new_position(self, capsys):
         self._run(
             holdings={"NVDA": 92.3431},

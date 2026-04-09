@@ -29,7 +29,10 @@ from googleapiclient.discovery import build
 
 SHEET_ID = os.environ["GSHEET_SHEET_ID"]
 US_PORTFOLIO_TAB = os.getenv("US_PORTFOLIO_TAB", "US Portfolio")
-ACCOUNT_TAB = os.getenv("ACCOUNT_BREAKDOWN_TAB", "Holdings by Account")
+ACCOUNT_TAB = os.getenv("ACCOUNT_BREAKDOWN_TAB", "US Holdings By Account")
+
+# Diffs smaller than this are floating-point noise from Monarch's API and are suppressed.
+_MIN_REPORTABLE_DIFF = 0.01
 
 _TICKER_RE = re.compile(r"^[A-Z]{1,5}$")
 
@@ -455,7 +458,7 @@ def sync(token: str) -> None:
             old_qty = round(old_quantities.get(ticker, 0.0), 6)
             diff = round(new_qty - old_qty, 6)
             print(f"  {ticker:6s} → D{ticker_to_row[ticker]}: {holdings[ticker]:,.4f}")
-            if diff != 0:
+            if abs(diff) >= _MIN_REPORTABLE_DIFF:
                 sign = "+" if diff >= 0 else ""
                 print(f"[US] Diff: {ticker} {sign}{diff}")
 
