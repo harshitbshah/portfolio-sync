@@ -33,6 +33,7 @@ Monarch Money is the source of truth (it integrates with all US brokerage accoun
 - **Updates** Column D (Quantity) for all tickers already in the *US Portfolio* tab
 - **Removes** rows for tickers no longer held in any brokerage account (closed positions)
 - **Inserts** new rows for tickers that appear in Monarch but not yet in the sheet — Theme and Conviction Rating are left blank for manual entry
+- **Syncs the *US Holdings By Account* tab** with a flat Ticker | Account | Qty breakdown across all brokerage accounts — updated incrementally (preserves user-added columns)
 
 Skips cash/money-market instruments and SGOV (managed separately via PF Summary): `CUR:USD`, `FCASH`, `FDRXX`, `SPAXX`, `SGOV`.
 
@@ -93,6 +94,7 @@ sync_indian_portfolio.py        sync.py                  sync_us_portfolio.py
 |-----|-----------|-------------|
 | PF Summary | `sync.py` | Net worth overview — bank, CDs, PPF, SGOV quantity, Indian + US PF + Cash totals |
 | US Portfolio | `sync_us_portfolio.py` | US equity positions with Theme, Quantity, Holdings, Conviction |
+| US Holdings By Account | `sync_us_portfolio.py` | Flat Ticker \| Account \| Qty table; per-brokerage breakdown across all accounts |
 | US PF P&L | Manual | Realized gains by year; performance vs SPY/QQQ |
 | Indian Portfolio | `sync_indian_portfolio.py` | Indian equity holdings — Zerodha quantities synced daily |
 | Indian PF P&L | Manual | Realized gains by Indian FY |
@@ -190,6 +192,23 @@ Monarch Money holdings. `sync_us_portfolio.py` updates column D daily. Column E 
 | New rows | A–F | Theme (A), Ticker (B), % of total (C formula), Qty (D), Holdings/GOOGLEFINANCE (E formula), Conviction (F) |
 | Closed rows | — | Entire row deleted via `deleteRange` (not `deleteDimension` — see note below) |
 
+### US Holdings By Account tab
+
+Flat Ticker | Account | Qty table, updated incrementally each run. Account names have the mask suffix stripped (e.g. `Robinhood IRA (...8902)` → `Robinhood IRA`).
+
+```
+┌────────┬──────────────────┬─────────┬────────────────────────────────┐
+│ Ticker │ Account          │ Qty     │ Amount (user-added col D)       │
+├────────┼──────────────────┼─────────┼────────────────────────────────┤
+│ HROW   │ Robinhood IRA    │    5.00 │ =IF(A2="",,IFERROR(C2*GOOG..)) │
+│ HROW   │ Robinhood Indiv  │   10.00 │                                │
+│ AAPL   │ Fidelity ROTH    │   12.50 │                                │
+│ ...    │ ...              │     ... │                                │
+└────────┴──────────────────┴─────────┴────────────────────────────────┘
+```
+
+Sync behaviour: only columns A–C are touched. User-added columns (D+) are preserved. New rows inserted with `insertDimension + inheritFromBefore=True` so the column D formula extends automatically.
+
 > **Note on row deletion:** Both sheets are Google Sheets native tables with Finance smart chips. The `deleteDimension` API call returns HTTP 500 on such sheets. Both scripts use `deleteRange` with `shiftDimension: ROWS` instead, which is Google's recommended approach for table row deletion.
 
 ## Structured log lines
@@ -200,6 +219,7 @@ Monarch Money holdings. `sync_us_portfolio.py` updates column D daily. Column E 
 | `[Indian] Closed: TICKER` | `[Indian] Closed: WINDLAS` | Indian position exited |
 | `[Indian] Added: TICKER +QTY` | `[Indian] Added: GPIL +5804` | New Indian position |
 | `[Indian] Margin: N.NN` | `[Indian] Margin: 12345.67` | Available cash in Zerodha (INR) |
+| `[US] Diff: TICKER ±N.NN` | `[US] Diff: HROW +5.00` | US quantity change (suppressed if < 0.01) |
 | `[US] Closed: TICKER` | `[US] Closed: ZS` | US position exited |
 | `[US] Added: TICKER +QTY` | `[US] Added: RKLB +460.87` | New US position |
 | `[SGOV] NAME: $VALUE` | `[SGOV] Fidelity ROTH (...1234): $12000.00` | Per-account SGOV dollar value |
@@ -282,6 +302,7 @@ print(s['token'])
 | `PF_BREAKDOWN_LABEL` | `PF Breakdown` | Header label that marks the portfolio breakdown table in PF Summary |
 | `INDIAN_PORTFOLIO_TAB` | `Indian Portfolio` | Tab name for `sync_indian_portfolio.py` |
 | `US_PORTFOLIO_TAB` | `US Portfolio` | Tab name for `sync_us_portfolio.py` |
+| `ACCOUNT_BREAKDOWN_TAB` | `US Holdings By Account` | Tab name for the per-account breakdown |
 | `KITE_ENCTOKEN_CACHE` | *(auto-managed)* | Cached Zerodha enctoken — updated automatically after each run to avoid repeated logins |
 
 `ACCOUNTS_JSON` maps each Monarch account to a row in the PF Summary tab:
@@ -330,7 +351,7 @@ Copy `.env.example` to `.env` and fill in your values for a more convenient loca
 python -m pytest tests/
 ```
 
-Tests cover `kite_auth.py` (login flow), `sync.py` (pure logic functions), `sync_indian_portfolio.py` (sync logic), and `format_email.py` (parsing and HTML generation). Google Sheets and Monarch API calls are mocked. 121 tests.
+Tests cover `kite_auth.py` (login flow), `sync.py` (pure logic functions), `sync_indian_portfolio.py` (sync logic), `sync_us_portfolio.py` (holdings sync + account tab), and `format_email.py` (parsing and HTML generation). Google Sheets and Monarch API calls are mocked. 171 tests.
 
 ## Maintenance
 
