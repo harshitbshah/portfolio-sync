@@ -354,48 +354,167 @@ def _get_or_create_tab(service, tab_name: str) -> int:
 
 
 def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
-    """Overwrite the Holdings by Account tab with a flat ticker/account/qty table."""
-    rows = []
-    for ticker in sorted(breakdown):
-        for account in sorted(breakdown[ticker]):
-            rows.append([ticker, account, breakdown[ticker][account]])
+    """Incrementally sync the Holdings by Account tab (add/remove rows as needed).
 
+    Reads the current state, then only updates changed quantities, deletes closed
+    positions, and inserts new ones — preserving any user-added columns (e.g. D+).
+    New rows are inserted with inheritFromBefore=True so column D formulas extend
+    automatically.
+    """
     service = _sheets_service(readonly=False)
     sheet_id = _get_or_create_tab(service, ACCOUNT_TAB)
 
-    service.spreadsheets().values().clear(
-        spreadsheetId=SHEET_ID,
-        range=f"'{ACCOUNT_TAB}'!A:C",
-    ).execute()
+    # Read current state of the tab
+    raw_rows = (
+        service.spreadsheets()
+        .values()
+        .get(
+            spreadsheetId=SHEET_ID,
+            range=f"'{ACCOUNT_TAB}'!A:C",
+            valueRenderOption="UNFORMATTED_VALUE",
+        )
+        .execute()
+        .get("values", [])
+    )
 
-    service.spreadsheets().values().update(
-        spreadsheetId=SHEET_ID,
-        range=f"'{ACCOUNT_TAB}'!A1",
-        valueInputOption="RAW",
-        body={"values": [["Ticker", "Account", "Qty"]] + rows},
-    ).execute()
+    # Parse header + existing data rows → {(ticker, account): (row_num, qty)}
+    has_header = bool(raw_rows and raw_rows[0] and str(raw_rows[0][0]).strip() == "Ticker")
+    existing: dict[tuple[str, str], tuple[int, float]] = {}
+    for i, row in enumerate(raw_rows):
+        if i == 0:
+            continue  # skip header
+        ticker = str(row[0]).strip() if row else ""
+        account = str(row[1]).strip() if len(row) > 1 else ""
+        if not ticker or not account:
+            continue
+        qty = float(row[2]) if len(row) > 2 else 0.0
+        existing[(ticker, account)] = (i + 1, qty)  # 1-indexed
 
-    service.spreadsheets().batchUpdate(
-        spreadsheetId=SHEET_ID,
-        body={"requests": [
-            {
-                "repeatCell": {
-                    "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1},
-                    "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
-                    "fields": "userEnteredFormat.textFormat.bold",
-                },
-            },
-            {
-                "updateSheetProperties": {
-                    "properties": {
-                        "sheetId": sheet_id,
-                        "gridProperties": {"frozenRowCount": 1},
+    # Desired state
+    new_data: dict[tuple[str, str], float] = {
+        (t, a): q
+        for t in sorted(breakdown)
+        for a, q in sorted(breakdown[t].items())
+    }
+
+    existing_keys = set(existing)
+    new_keys = set(new_data)
+    to_remove = existing_keys - new_keys
+    to_add    = new_keys - existing_keys
+    to_update = {
+        k for k in existing_keys & new_keys
+        if round(new_data[k], 6) != round(existing[k][1], 6)
+    }
+
+    # ── Step 1: Write header + freeze on first run ────────────────────────────
+    if not has_header:
+        service.spreadsheets().values().update(
+            spreadsheetId=SHEET_ID,
+            range=f"'{ACCOUNT_TAB}'!A1",
+            valueInputOption="RAW",
+            body={"values": [["Ticker", "Account", "Qty"]]},
+        ).execute()
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=SHEET_ID,
+            body={"requests": [
+                {
+                    "repeatCell": {
+                        "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1},
+                        "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
+                        "fields": "userEnteredFormat.textFormat.bold",
                     },
-                    "fields": "gridProperties.frozenRowCount",
                 },
+                {
+                    "updateSheetProperties": {
+                        "properties": {
+                            "sheetId": sheet_id,
+                            "gridProperties": {"frozenRowCount": 1},
+                        },
+                        "fields": "gridProperties.frozenRowCount",
+                    },
+                },
+            ]},
+        ).execute()
+
+    # ── Step 2: Update changed quantities (before deletions, row numbers valid) ─
+    if to_update:
+        service.spreadsheets().values().batchUpdate(
+            spreadsheetId=SHEET_ID,
+            body={
+                "valueInputOption": "RAW",
+                "data": [
+                    {
+                        "range": f"'{ACCOUNT_TAB}'!C{existing[k][0]}",
+                        "values": [[new_data[k]]],
+                    }
+                    for k in to_update
+                ],
             },
-        ]},
-    ).execute()
+        ).execute()
+
+    # ── Step 3: Delete removed rows (reverse order to avoid index shifting) ────
+    if to_remove:
+        rows_to_delete = sorted([existing[k][0] for k in to_remove], reverse=True)
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=SHEET_ID,
+            body={"requests": [
+                {
+                    "deleteRange": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": row - 1,
+                            "endRowIndex": row,
+                        },
+                        "shiftDimension": "ROWS",
+                    }
+                }
+                for row in rows_to_delete
+            ]},
+        ).execute()
+
+    # ── Step 4: Insert new rows (inheritFromBefore copies column D formula) ────
+    if to_add:
+        new_rows = sorted(to_add)
+        n = len(new_rows)
+        rows_remaining = len(existing) - len(to_remove)
+        insert_at = 1 + rows_remaining  # 0-indexed: after header + remaining rows
+        # Only inherit if there's at least one data row above (avoids inheriting
+        # bold header formatting on the very first data row of a fresh tab)
+        inherit = rows_remaining > 0
+
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=SHEET_ID,
+            body={"requests": [
+                {
+                    "insertDimension": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": insert_at,
+                            "endIndex": insert_at + n,
+                        },
+                        "inheritFromBefore": inherit,
+                    }
+                }
+            ]},
+        ).execute()
+
+        service.spreadsheets().values().batchUpdate(
+            spreadsheetId=SHEET_ID,
+            body={
+                "valueInputOption": "RAW",
+                "data": [
+                    {
+                        "range": f"'{ACCOUNT_TAB}'!A{insert_at + 1 + i}:C{insert_at + 1 + i}",
+                        "values": [[t, a, new_data[(t, a)]]],
+                    }
+                    for i, (t, a) in enumerate(new_rows)
+                ],
+            },
+        ).execute()
+
+    print(f"  Account tab: +{len(to_add)} added, -{len(to_remove)} removed, "
+          f"{len(to_update)} updated.")
 
 
 def get_sheet_quantities() -> dict[str, float]:

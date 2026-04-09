@@ -285,63 +285,113 @@ class TestGetOrCreateTab:
 # ── sync_account_tab() ────────────────────────────────────────────────────────
 
 class TestSyncAccountTab:
-    def _make_svc(self, existing_tabs=None):
-        mock_svc = MagicMock()
-        titles = existing_tabs or ["Holdings by Account"]
-        mock_svc.spreadsheets.return_value.get.return_value.execute.return_value = {
-            "sheets": [{"properties": {"title": t, "sheetId": i}} for i, t in enumerate(titles)]
-        }
-        return mock_svc
+    def _make_svc(self, rows):
+        """Mock service returning given rows from values().get()."""
+        svc = MagicMock()
+        (svc.spreadsheets.return_value.values.return_value
+            .get.return_value.execute.return_value) = {"values": rows}
+        return svc
 
-    def test_writes_header_row(self):
-        mock_svc = self._make_svc()
-        with patch("sync_us_portfolio._sheets_service", return_value=mock_svc):
-            usp.sync_account_tab({"AAPL": {"Robinhood IRA": 5.0}})
-        update_call = mock_svc.spreadsheets.return_value.values.return_value.update
-        body = update_call.call_args[1]["body"]
-        assert body["values"][0] == ["Ticker", "Account", "Qty"]
-
-    def test_writes_rows_sorted_by_ticker_then_account(self):
-        mock_svc = self._make_svc()
-        with patch("sync_us_portfolio._sheets_service", return_value=mock_svc):
-            usp.sync_account_tab({
-                "MSFT": {"IRA": 3.0},
-                "AAPL": {"Individual": 10.0, "IRA": 5.0},
-            })
-        update_call = mock_svc.spreadsheets.return_value.values.return_value.update
-        body = update_call.call_args[1]["body"]
-        rows = body["values"][1:]  # skip header
-        assert rows[0] == ["AAPL", "IRA", 5.0]
-        assert rows[1] == ["AAPL", "Individual", 10.0]
-        assert rows[2] == ["MSFT", "IRA", 3.0]
-
-    def test_clears_only_columns_a_to_c(self):
-        mock_svc = self._make_svc()
-        with patch("sync_us_portfolio._sheets_service", return_value=mock_svc):
+    def test_writes_header_on_first_run(self):
+        """Empty tab → write header + bold/freeze."""
+        svc = self._make_svc([])
+        with patch("sync_us_portfolio._sheets_service", return_value=svc), \
+             patch("sync_us_portfolio._get_or_create_tab", return_value=5):
             usp.sync_account_tab({"AAPL": {"IRA": 5.0}})
-        clear_call = mock_svc.spreadsheets.return_value.values.return_value.clear
-        clear_call.assert_called_once()
-        assert "A:C" in clear_call.call_args[1]["range"]
+        update_call = svc.spreadsheets.return_value.values.return_value.update
+        update_call.assert_called_once()
+        assert update_call.call_args[1]["body"]["values"][0] == ["Ticker", "Account", "Qty"]
 
-    def test_creates_tab_if_missing(self):
-        mock_svc = self._make_svc(existing_tabs=["US Portfolio"])
-        mock_svc.spreadsheets.return_value.batchUpdate.return_value.execute.return_value = {
-            "replies": [{"addSheet": {"properties": {"sheetId": 42}}}]
-        }
-        with patch("sync_us_portfolio._sheets_service", return_value=mock_svc):
+    def test_skips_header_when_already_present(self):
+        """Tab already has 'Ticker' header → do not re-write header."""
+        rows = [["Ticker", "Account", "Qty"], ["AAPL", "IRA", 5.0]]
+        svc = self._make_svc(rows)
+        with patch("sync_us_portfolio._sheets_service", return_value=svc), \
+             patch("sync_us_portfolio._get_or_create_tab", return_value=5):
             usp.sync_account_tab({"AAPL": {"IRA": 5.0}})
-        # batchUpdate called once for tab creation, once for header formatting
-        assert mock_svc.spreadsheets.return_value.batchUpdate.call_count == 2
+        svc.spreadsheets.return_value.values.return_value.update.assert_not_called()
 
-    def test_formats_header_bold_with_frozen_row(self):
-        mock_svc = self._make_svc()
-        with patch("sync_us_portfolio._sheets_service", return_value=mock_svc):
+    def test_formats_header_bold_with_frozen_row_on_first_run(self):
+        """First run writes bold+freeze via batchUpdate."""
+        svc = self._make_svc([])
+        with patch("sync_us_portfolio._sheets_service", return_value=svc), \
+             patch("sync_us_portfolio._get_or_create_tab", return_value=5):
             usp.sync_account_tab({"AAPL": {"IRA": 5.0}})
-        format_call = mock_svc.spreadsheets.return_value.batchUpdate
-        body = format_call.call_args[1]["body"]
-        request_types = [list(r.keys())[0] for r in body["requests"]]
+        all_batch_calls = svc.spreadsheets.return_value.batchUpdate.call_args_list
+        # Find the call that has repeatCell (bold) and updateSheetProperties (freeze)
+        format_call = next(
+            c for c in all_batch_calls
+            if "repeatCell" in str(c)
+        )
+        request_types = [list(r.keys())[0] for r in format_call[1]["body"]["requests"]]
         assert "repeatCell" in request_types
         assert "updateSheetProperties" in request_types
+
+    def test_no_op_when_all_quantities_unchanged(self):
+        """No inserts/deletes/updates → no spreadsheet writes at all."""
+        rows = [["Ticker", "Account", "Qty"], ["AAPL", "IRA", 5.0]]
+        svc = self._make_svc(rows)
+        with patch("sync_us_portfolio._sheets_service", return_value=svc), \
+             patch("sync_us_portfolio._get_or_create_tab", return_value=5):
+            usp.sync_account_tab({"AAPL": {"IRA": 5.0}})
+        svc.spreadsheets.return_value.values.return_value.update.assert_not_called()
+        svc.spreadsheets.return_value.values.return_value.batchUpdate.assert_not_called()
+        svc.spreadsheets.return_value.batchUpdate.assert_not_called()
+
+    def test_updates_changed_quantity(self):
+        """Existing row with different qty → values().batchUpdate() for that cell."""
+        rows = [["Ticker", "Account", "Qty"], ["AAPL", "IRA", 5.0]]
+        svc = self._make_svc(rows)
+        with patch("sync_us_portfolio._sheets_service", return_value=svc), \
+             patch("sync_us_portfolio._get_or_create_tab", return_value=5):
+            usp.sync_account_tab({"AAPL": {"IRA": 7.0}})
+        batch_update = svc.spreadsheets.return_value.values.return_value.batchUpdate
+        batch_update.assert_called_once()
+        data = batch_update.call_args[1]["body"]["data"]
+        assert any(7.0 in r["values"][0] for r in data)
+
+    def test_deletes_removed_rows_in_reverse_order(self):
+        """Rows to remove are deleted highest row-number first."""
+        rows = [
+            ["Ticker", "Account", "Qty"],
+            ["AAPL", "IRA", 5.0],   # row 2 → 0-indexed startRowIndex=1
+            ["MSFT", "IRA", 3.0],   # row 3 → 0-indexed startRowIndex=2
+        ]
+        svc = self._make_svc(rows)
+        with patch("sync_us_portfolio._sheets_service", return_value=svc), \
+             patch("sync_us_portfolio._get_or_create_tab", return_value=5):
+            usp.sync_account_tab({})  # empty breakdown → both rows removed
+        all_batch_calls = svc.spreadsheets.return_value.batchUpdate.call_args_list
+        delete_call = next(c for c in all_batch_calls if "deleteRange" in str(c))
+        indices = [
+            r["deleteRange"]["range"]["startRowIndex"]
+            for r in delete_call[1]["body"]["requests"]
+        ]
+        assert indices == sorted(indices, reverse=True)
+
+    def test_inserts_new_rows_with_inherit_when_existing_data(self):
+        """New rows added to a tab with existing data use inheritFromBefore=True."""
+        rows = [["Ticker", "Account", "Qty"], ["AAPL", "IRA", 5.0]]
+        svc = self._make_svc(rows)
+        with patch("sync_us_portfolio._sheets_service", return_value=svc), \
+             patch("sync_us_portfolio._get_or_create_tab", return_value=5):
+            # AAPL unchanged, MSFT is new
+            usp.sync_account_tab({"AAPL": {"IRA": 5.0}, "MSFT": {"IRA": 3.0}})
+        all_batch_calls = svc.spreadsheets.return_value.batchUpdate.call_args_list
+        insert_call = next(c for c in all_batch_calls if "insertDimension" in str(c))
+        req = insert_call[1]["body"]["requests"][0]["insertDimension"]
+        assert req["inheritFromBefore"] is True
+
+    def test_inserts_new_rows_no_inherit_on_fresh_tab(self):
+        """New rows on an empty tab use inheritFromBefore=False (avoid copying bold header)."""
+        svc = self._make_svc([])
+        with patch("sync_us_portfolio._sheets_service", return_value=svc), \
+             patch("sync_us_portfolio._get_or_create_tab", return_value=5):
+            usp.sync_account_tab({"AAPL": {"IRA": 5.0}})
+        all_batch_calls = svc.spreadsheets.return_value.batchUpdate.call_args_list
+        insert_call = next(c for c in all_batch_calls if "insertDimension" in str(c))
+        req = insert_call[1]["body"]["requests"][0]["insertDimension"]
+        assert req["inheritFromBefore"] is False
 
 
 # ── sync() ────────────────────────────────────────────────────────────────────
