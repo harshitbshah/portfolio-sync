@@ -44,6 +44,14 @@ class TestGetSheetQuantities:
             result = usp.get_sheet_quantities()
         assert result["AAPL"] == 0.0
 
+    def test_skips_rows_where_ticker_cell_is_numeric(self):
+        # UNFORMATTED_VALUE returns int/float for formula cells; totals rows can
+        # have a number in column B — must not crash on .strip()
+        rows = [["Ticker", "% Portfolio", "Qty"], [29, 1.0, 5000.0]]
+        with patch("sync_us_portfolio._sheets_service", return_value=self._mock_svc(rows)):
+            result = usp.get_sheet_quantities()
+        assert result == {}
+
     def test_uses_unformatted_value_render_option(self):
         svc = self._mock_svc([])
         with patch("sync_us_portfolio._sheets_service", return_value=svc):

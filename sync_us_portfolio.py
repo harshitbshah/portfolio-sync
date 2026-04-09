@@ -416,7 +416,7 @@ def get_sheet_quantities() -> dict[str, float]:
     for i, row in enumerate(rows):
         if i == 0:
             continue  # header
-        ticker = row[0].strip() if row else ""
+        ticker = str(row[0]).strip() if row else ""
         if not _TICKER_RE.match(ticker):
             continue
         try:
