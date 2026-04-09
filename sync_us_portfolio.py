@@ -305,17 +305,29 @@ def get_holdings_by_account(token: str) -> dict[str, dict[str, float]]:
 
 def _get_or_create_tab(service, tab_name: str) -> int:
     """Return the sheetId for tab_name, creating it if it doesn't exist."""
-    def _find_in_meta(meta):
+    import unicodedata
+
+    def _norm(s: str) -> str:
+        return " ".join(unicodedata.normalize("NFKD", s).split()).casefold()
+
+    def _find_in_meta(meta, fuzzy: bool = False):
         for sheet in meta.get("sheets", []):
-            if sheet["properties"]["title"].strip() == tab_name.strip():
+            title = sheet["properties"]["title"]
+            match = _norm(title) == _norm(tab_name) if fuzzy else title.strip() == tab_name.strip()
+            if match:
                 return sheet["properties"]["sheetId"]
         return None
+
+    def _all_titles(meta):
+        return [s["properties"]["title"] for s in meta.get("sheets", [])]
 
     meta = service.spreadsheets().get(
         spreadsheetId=SHEET_ID,
         fields="sheets.properties",
     ).execute()
-    sheet_id = _find_in_meta(meta)
+    print(f"  [debug] tabs in sheet: {_all_titles(meta)}")
+
+    sheet_id = _find_in_meta(meta) or _find_in_meta(meta, fuzzy=True)
     if sheet_id is not None:
         return sheet_id
 
@@ -328,15 +340,17 @@ def _get_or_create_tab(service, tab_name: str) -> int:
     except HttpError as e:
         if "already exists" not in str(e):
             raise
-        # Tab exists but wasn't matched (encoding/whitespace mismatch) — re-fetch
         meta = service.spreadsheets().get(
             spreadsheetId=SHEET_ID,
             fields="sheets.properties",
         ).execute()
-        sheet_id = _find_in_meta(meta)
+        print(f"  [debug] tabs after 'already exists': {_all_titles(meta)}")
+        sheet_id = _find_in_meta(meta) or _find_in_meta(meta, fuzzy=True)
         if sheet_id is not None:
             return sheet_id
-        raise ValueError(f"Tab '{tab_name}' reported as existing but not found in metadata") from e
+        raise ValueError(
+            f"Tab '{tab_name}' not found even after fuzzy match. Tabs: {_all_titles(meta)}"
+        ) from e
 
 
 def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
