@@ -368,6 +368,24 @@ def print_net_worth(token: str) -> None:
 
 
 # ── Step 6: Read PF Breakdown summary table ───────────────────────────────────
+def _find_bad_tickers(tab: str, ticker_col: int = 1, value_col: int = 4) -> list[str]:
+    """Return tickers from a sheet tab whose value column is unparseable (e.g. #N/A)."""
+    service = _sheets_service(readonly=True)
+    result = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=SHEET_ID, range=f"'{tab}'")
+        .execute()
+    )
+    bad = []
+    for row in result.get("values", [])[1:]:  # skip header
+        ticker = row[ticker_col].strip() if len(row) > ticker_col else ""
+        value = row[value_col].strip() if len(row) > value_col else ""
+        if ticker and not re.sub(r"[^\d.]", "", value):
+            bad.append(f"{ticker}({value!r})")
+    return bad
+
+
 def print_pf_summary() -> None:
     """Find 'PF Breakdown' header dynamically and print a parseable summary line."""
     rows = _read_sheet_rows()
@@ -400,7 +418,9 @@ def print_pf_summary() -> None:
             break
         amount_str = re.sub(r"[^\d.]", "", str(amount_raw))
         if not amount_str:
-            print(f"  WARNING: PF Breakdown '{label}' amount is unavailable ({amount_raw!r}) — skipping row", file=sys.stderr)
+            bad = _find_bad_tickers("US Portfolio") if label == "US PF" else []
+            detail = f" — bad tickers: {', '.join(bad)}" if bad else ""
+            print(f"  WARNING: PF Breakdown '{label}' amount is unavailable ({amount_raw!r}){detail} — skipping row", file=sys.stderr)
             continue
         amount = float(amount_str)
 
