@@ -405,11 +405,14 @@ def print_pf_summary() -> None:
             break
         if pct_raw is not None:
             pct_str = str(pct_raw).strip()
-            if pct_str.endswith("%"):
-                pct = float(pct_str[:-1])
-            else:
-                pct = float(pct_str) * 100
-            components.append(f"{label} ${amount:,.2f} {pct:.2f}%")
+            try:
+                if pct_str.endswith("%"):
+                    pct = float(pct_str[:-1])
+                else:
+                    pct = float(pct_str) * 100
+                components.append(f"{label} ${amount:,.2f} {pct:.2f}%")
+            except ValueError:
+                components.append(f"{label} ${amount:,.2f}")
 
     parts = components + ([f"Total ${total:,.2f}"] if total else [])
     print(f"PF Summary: {' | '.join(parts)}")
