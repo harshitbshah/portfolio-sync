@@ -381,8 +381,8 @@ def _find_bad_tickers(tab: str, ticker_col: int = 1, value_col: int = 4) -> list
     for row in result.get("values", [])[1:]:  # skip header
         ticker = row[ticker_col].strip() if len(row) > ticker_col else ""
         value = row[value_col].strip() if len(row) > value_col else ""
-        if ticker and not re.sub(r"[^\d.]", "", value):
-            bad.append(f"{ticker}({value!r})")
+        if re.match(r"^[A-Z]{1,5}$", ticker) and not re.sub(r"[^\d.]", "", value):
+            bad.append(ticker)
     return bad
 
 
@@ -418,9 +418,11 @@ def print_pf_summary() -> None:
             break
         amount_str = re.sub(r"[^\d.]", "", str(amount_raw))
         if not amount_str:
+            if not label:
+                break  # totals row with bad value — nothing useful after this
             bad = _find_bad_tickers("US Portfolio") if label == "US PF" else []
-            detail = f" — bad tickers: {', '.join(bad)}" if bad else ""
-            print(f"  WARNING: PF Breakdown '{label}' amount is unavailable ({amount_raw!r}){detail} — skipping row", file=sys.stderr)
+            detail = f" (caused by: {', '.join(bad)})" if bad else ""
+            print(f"  WARNING: {label} price data unavailable{detail} — skipping", file=sys.stderr)
             continue
         amount = float(amount_str)
 
