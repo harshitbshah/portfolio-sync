@@ -398,7 +398,11 @@ def print_pf_summary() -> None:
 
         if amount_raw is None:
             break
-        amount = float(re.sub(r"[^\d.]", "", str(amount_raw)))
+        amount_str = re.sub(r"[^\d.]", "", str(amount_raw))
+        if not amount_str:
+            print(f"  WARNING: PF Breakdown '{label}' amount is unavailable ({amount_raw!r}) — skipping row", file=sys.stderr)
+            continue
+        amount = float(amount_str)
 
         if not label:
             total = amount  # blank label = total row
