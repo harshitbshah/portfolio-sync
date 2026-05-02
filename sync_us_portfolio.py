@@ -261,8 +261,12 @@ def insert_new_rows(
 
 
 def _shorten_account_name(display_name: str) -> str:
-    """Strip trailing account mask like ' (...8902)' for a compact label."""
-    return re.sub(r'\s*\(\.\.\.[^)]*\)\s*$', '', display_name).strip() or display_name
+    """Replace the '...' prefix in account masks so '(...8902)' becomes '(8902)'.
+
+    This preserves the disambiguating digits so two accounts with the same
+    institution name (e.g. two Robinhood Individual accounts) remain distinct.
+    """
+    return re.sub(r'\(\.\.\.(.*?)\)', r'(\1)', display_name).strip() or display_name
 
 
 def get_holdings_by_account(token: str) -> dict[str, dict[str, float]]:
@@ -545,6 +549,29 @@ def get_sheet_quantities() -> dict[str, float]:
     return quantities
 
 
+def sort_portfolio_sheet(sheet_tickers: list[tuple[int, str]]) -> None:
+    """Sort all data rows in the US Portfolio tab alphabetically by ticker (column B)."""
+    if not sheet_tickers:
+        return
+    grid_id = get_sheet_grid_id()
+    last_row = max(row for row, _ in sheet_tickers)
+    _sheets_service(readonly=False).spreadsheets().batchUpdate(
+        spreadsheetId=SHEET_ID,
+        body={"requests": [{
+            "sortRange": {
+                "range": {
+                    "sheetId": grid_id,
+                    "startRowIndex": 1,        # skip header (0-indexed)
+                    "endRowIndex": last_row,   # exclusive, covers all data rows
+                    "startColumnIndex": 0,
+                    "endColumnIndex": 7,       # columns A-G
+                },
+                "sortSpecs": [{"dimensionIndex": 1, "sortOrder": "ASCENDING"}],
+            }
+        }]},
+    ).execute()
+
+
 def update_quantities(
     to_update: set[str],
     holdings: dict[str, float],
@@ -602,6 +629,8 @@ def sync(token: str) -> None:
             print(f"  {ticker:6s}: {qty:,.4f} shares (Theme/Conviction: fill manually)")
             print(f"[US] Added: {ticker} +{qty:,.6f}")
         sheet_tickers = get_sheet_tickers()  # re-read after insertions
+        print("  Sorting portfolio tab alphabetically...")
+        sort_portfolio_sheet(sheet_tickers)
     else:
         print("No new positions to add.")
 

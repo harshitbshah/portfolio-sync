@@ -169,17 +169,22 @@ class TestGetAllHoldings:
 # ── _shorten_account_name() ───────────────────────────────────────────────────
 
 class TestShortenAccountName:
-    def test_strips_numeric_mask(self):
-        assert usp._shorten_account_name("Robinhood individual (...8902)") == "Robinhood individual"
+    def test_keeps_digits_from_mask(self):
+        assert usp._shorten_account_name("Robinhood individual (...8902)") == "Robinhood individual (8902)"
 
-    def test_strips_alphanumeric_mask(self):
-        assert usp._shorten_account_name("ROTH IRA (...*****4882)") == "ROTH IRA"
+    def test_keeps_alphanumeric_mask(self):
+        assert usp._shorten_account_name("ROTH IRA (...*****4882)") == "ROTH IRA (*****4882)"
 
     def test_no_mask_unchanged(self):
         assert usp._shorten_account_name("Fidelity 401k") == "Fidelity 401k"
 
     def test_empty_string_returns_empty(self):
         assert usp._shorten_account_name("") == ""
+
+    def test_two_same_name_accounts_produce_distinct_keys(self):
+        name1 = usp._shorten_account_name("Robinhood individual (...8902)")
+        name2 = usp._shorten_account_name("Robinhood individual (...1234)")
+        assert name1 != name2
 
 
 # ── get_holdings_by_account() ─────────────────────────────────────────────────
@@ -213,8 +218,24 @@ class TestGetHoldingsByAccount:
             self._holdings_resp([("HROW", 10.0)]),
         ]):
             result = usp.get_holdings_by_account("token")
-        assert result["HROW"]["Robinhood IRA"] == 5.0
-        assert result["HROW"]["Robinhood individual"] == 10.0
+        assert result["HROW"]["Robinhood IRA (1111)"] == 5.0
+        assert result["HROW"]["Robinhood individual (2222)"] == 10.0
+
+    def test_two_accounts_same_name_kept_separate(self):
+        """Two Robinhood Individual accounts must not be merged into one."""
+        accounts = self._accounts_resp([
+            {"id": "acc1", "displayName": "Robinhood individual (...8902)", "deactivatedAt": None, "type": {"name": "brokerage"}},
+            {"id": "acc2", "displayName": "Robinhood individual (...1234)", "deactivatedAt": None, "type": {"name": "brokerage"}},
+        ])
+        with patch("sync_us_portfolio._monarch_request", side_effect=[
+            accounts,
+            self._holdings_resp([("AAPL", 10.0)]),
+            self._holdings_resp([("AAPL", 5.0)]),
+        ]):
+            result = usp.get_holdings_by_account("token")
+        assert result["AAPL"]["Robinhood individual (8902)"] == 10.0
+        assert result["AAPL"]["Robinhood individual (1234)"] == 5.0
+        assert len(result["AAPL"]) == 2
 
     def test_skips_non_brokerage_accounts(self):
         accounts = self._accounts_resp([
@@ -394,6 +415,28 @@ class TestSyncAccountTab:
         assert req["inheritFromBefore"] is False
 
 
+# ── sort_portfolio_sheet() ────────────────────────────────────────────────────
+
+class TestSortPortfolioSheet:
+    def test_issues_sort_range_request(self):
+        svc = MagicMock()
+        with patch("sync_us_portfolio._sheets_service", return_value=svc), \
+             patch("sync_us_portfolio.get_sheet_grid_id", return_value=7):
+            usp.sort_portfolio_sheet([(2, "MSFT"), (3, "AAPL")])
+        batch_call = svc.spreadsheets.return_value.batchUpdate
+        batch_call.assert_called_once()
+        req = batch_call.call_args[1]["body"]["requests"][0]
+        assert "sortRange" in req
+        sort = req["sortRange"]
+        assert sort["sortSpecs"][0]["sortOrder"] == "ASCENDING"
+        assert sort["range"]["startRowIndex"] == 1  # skips header
+
+    def test_no_op_on_empty_tickers(self):
+        with patch("sync_us_portfolio._sheets_service") as mock_svc:
+            usp.sort_portfolio_sheet([])
+        mock_svc.assert_not_called()
+
+
 # ── sync() ────────────────────────────────────────────────────────────────────
 
 class TestSync:
@@ -405,6 +448,7 @@ class TestSync:
              patch("sync_us_portfolio.get_sheet_quantities", return_value=old_quantities), \
              patch("sync_us_portfolio.delete_closed_rows"), \
              patch("sync_us_portfolio.insert_new_rows"), \
+             patch("sync_us_portfolio.sort_portfolio_sheet"), \
              patch("sync_us_portfolio.update_quantities"), \
              patch("sync_us_portfolio.get_holdings_by_account", return_value={}), \
              patch("sync_us_portfolio.sync_account_tab"):
@@ -457,6 +501,29 @@ class TestSync:
             sheet_tickers=[],
         )
         assert "[US] Added: NVDA" in capsys.readouterr().out
+
+    def test_sort_called_when_new_tickers_added(self):
+        with patch("sync_us_portfolio.get_all_holdings", return_value={"NVDA": 5.0}), \
+             patch("sync_us_portfolio.get_sheet_tickers", return_value=[]), \
+             patch("sync_us_portfolio.get_sheet_quantities", return_value={}), \
+             patch("sync_us_portfolio.insert_new_rows"), \
+             patch("sync_us_portfolio.sort_portfolio_sheet") as mock_sort, \
+             patch("sync_us_portfolio.update_quantities"), \
+             patch("sync_us_portfolio.get_holdings_by_account", return_value={}), \
+             patch("sync_us_portfolio.sync_account_tab"):
+            usp.sync("token")
+        mock_sort.assert_called_once()
+
+    def test_sort_not_called_when_no_new_tickers(self):
+        with patch("sync_us_portfolio.get_all_holdings", return_value={"AAPL": 10.0}), \
+             patch("sync_us_portfolio.get_sheet_tickers", return_value=[(2, "AAPL")]), \
+             patch("sync_us_portfolio.get_sheet_quantities", return_value={"AAPL": 10.0}), \
+             patch("sync_us_portfolio.update_quantities"), \
+             patch("sync_us_portfolio.sort_portfolio_sheet") as mock_sort, \
+             patch("sync_us_portfolio.get_holdings_by_account", return_value={}), \
+             patch("sync_us_portfolio.sync_account_tab"):
+            usp.sync("token")
+        mock_sort.assert_not_called()
 
     def test_emits_closed_for_removed_position(self, capsys):
         self._run(
