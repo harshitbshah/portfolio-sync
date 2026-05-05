@@ -1,0 +1,23 @@
+name: Backfill Amount Formulas (one-time)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  backfill:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install google-auth google-auth-httplib2 google-api-python-client
+
+      - name: Run backfill
+        env:
+          GSHEET_SERVICE_ACCOUNT_JSON: ${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}
+          GSHEET_SHEET_ID: ${{ vars.GSHEET_SHEET_ID }}
+        run: python backfill_amount_formulas.py
