@@ -124,7 +124,6 @@ query GetHoldings($accountId: ID!) {
             edges {
                 node {
                     quantity
-                    totalValue
                     holdings { ticker }
                 }
             }
@@ -270,8 +269,8 @@ def _shorten_account_name(display_name: str) -> str:
     return re.sub(r'\(\.\.\.(.*?)\)', r'(\1)', display_name).strip() or display_name
 
 
-def get_holdings_by_account(token: str) -> dict[str, dict[str, tuple[float, float]]]:
-    """Return {ticker: {account_short_name: (qty, value)}} across all active brokerage accounts."""
+def get_holdings_by_account(token: str) -> dict[str, dict[str, float]]:
+    """Return {ticker: {account_short_name: qty}} across all active brokerage accounts."""
     result = _monarch_request(token, json.dumps({"query": _ACCOUNTS_QUERY}).encode())
     accounts = result.get("data", {}).get("accounts", [])
     brokerage_accounts = [
@@ -279,7 +278,7 @@ def get_holdings_by_account(token: str) -> dict[str, dict[str, tuple[float, floa
         if a.get("type", {}).get("name") == "brokerage" and not a.get("deactivatedAt")
     ]
 
-    by_account: dict[str, dict[str, tuple[float, float]]] = {}
+    by_account: dict[str, dict[str, float]] = {}
     for account in brokerage_accounts:
         account_id = account["id"]
         short_name = _shorten_account_name(account.get("displayName", account_id))
@@ -297,15 +296,13 @@ def get_holdings_by_account(token: str) -> dict[str, dict[str, tuple[float, floa
         for edge in edges:
             node = edge.get("node", {})
             qty = node.get("quantity") or 0.0
-            total_value = node.get("totalValue") or 0.0
             for holding in node.get("holdings", []):
                 ticker = holding.get("ticker")
                 if not ticker or ticker in _SKIP_TICKERS or not _TICKER_RE.match(ticker):
                     continue
                 if ticker not in by_account:
                     by_account[ticker] = {}
-                prev_qty, prev_val = by_account[ticker].get(short_name, (0.0, 0.0))
-                by_account[ticker][short_name] = (prev_qty + qty, prev_val + total_value)
+                by_account[ticker][short_name] = by_account[ticker].get(short_name, 0.0) + qty
 
     return by_account
 
@@ -377,16 +374,16 @@ def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
         .values()
         .get(
             spreadsheetId=SHEET_ID,
-            range=f"'{ACCOUNT_TAB}'!A:D",
+            range=f"'{ACCOUNT_TAB}'!A:C",
             valueRenderOption="UNFORMATTED_VALUE",
         )
         .execute()
         .get("values", [])
     )
 
-    # Parse header + existing data rows → {(ticker, account): (row_num, qty, amount)}
+    # Parse header + existing data rows → {(ticker, account): (row_num, qty)}
     has_header = bool(raw_rows and raw_rows[0] and str(raw_rows[0][0]).strip() == "Ticker")
-    existing: dict[tuple[str, str], tuple[int, float, float]] = {}
+    existing: dict[tuple[str, str], tuple[int, float]] = {}
     for i, row in enumerate(raw_rows):
         if i == 0:
             continue  # skip header
@@ -395,14 +392,13 @@ def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
         if not ticker or not account:
             continue
         qty = float(row[2]) if len(row) > 2 else 0.0
-        amount = float(row[3]) if len(row) > 3 else 0.0
-        existing[(ticker, account)] = (i + 1, qty, amount)  # 1-indexed
+        existing[(ticker, account)] = (i + 1, qty)  # 1-indexed
 
     # Desired state
-    new_data: dict[tuple[str, str], tuple[float, float]] = {
-        (t, a): (q, v)
+    new_data: dict[tuple[str, str], float] = {
+        (t, a): q
         for t in sorted(breakdown)
-        for a, (q, v) in sorted(breakdown[t].items())
+        for a, q in sorted(breakdown[t].items())
     }
 
     existing_keys = set(existing)
@@ -411,8 +407,7 @@ def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
     to_add    = new_keys - existing_keys
     to_update = {
         k for k in existing_keys & new_keys
-        if round(new_data[k][0], 6) != round(existing[k][1], 6)
-        or round(new_data[k][1], 2) != round(existing[k][2], 2)
+        if round(new_data[k], 6) != round(existing[k][1], 6)
     }
 
     # ── Step 1: Write header + freeze on first run ────────────────────────────
@@ -445,7 +440,7 @@ def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
             ]},
         ).execute()
 
-    # ── Step 2: Update changed quantities/amounts (before deletions, row numbers valid) ─
+    # ── Step 2: Update changed quantities (before deletions, row numbers valid) ─
     if to_update:
         service.spreadsheets().values().batchUpdate(
             spreadsheetId=SHEET_ID,
@@ -453,8 +448,8 @@ def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
                 "valueInputOption": "RAW",
                 "data": [
                     {
-                        "range": f"'{ACCOUNT_TAB}'!C{existing[k][0]}:D{existing[k][0]}",
-                        "values": [[new_data[k][0], new_data[k][1]]],
+                        "range": f"'{ACCOUNT_TAB}'!C{existing[k][0]}",
+                        "values": [[new_data[k]]],
                     }
                     for k in to_update
                 ],
@@ -515,7 +510,8 @@ def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
                 "data": [
                     {
                         "range": f"'{ACCOUNT_TAB}'!A{insert_at + 1 + i}:D{insert_at + 1 + i}",
-                        "values": [[t, a, new_data[(t, a)][0], new_data[(t, a)][1]]],
+                        "values": [[t, a, new_data[(t, a)],
+                                    f'=C{insert_at + 1 + i}*GOOGLEFINANCE("{t}")']],
                     }
                     for i, (t, a) in enumerate(new_rows)
                 ],
