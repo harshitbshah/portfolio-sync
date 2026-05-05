@@ -34,7 +34,7 @@ def backfill():
         .get(
             spreadsheetId=SHEET_ID,
             range=f"'{ACCOUNT_TAB}'!A:D",
-            valueRenderOption="UNFORMATTED_VALUE",
+            valueRenderOption="FORMULA",   # returns formula text, not computed value
         )
         .execute()
         .get("values", [])
@@ -48,9 +48,10 @@ def backfill():
         account = str(row[1]).strip() if len(row) > 1 else ""
         if not ticker or not account or not _TICKER_RE.match(ticker):
             continue
-        has_formula = len(row) > 3 and row[3] not in ("", None)
-        if has_formula:
-            continue  # already populated
+        d_cell = str(row[3]).strip() if len(row) > 3 else ""
+        # Skip only if already has a GOOGLEFINANCE formula
+        if "GOOGLEFINANCE" in d_cell.upper():
+            continue
 
         row_num = i + 1
         updates.append({
