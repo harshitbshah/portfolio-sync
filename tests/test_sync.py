@@ -239,6 +239,41 @@ class TestPrintPfSummary:
         assert "Indian PF" in out
         assert "Total" in out
 
+    def test_warns_when_us_pf_diverges_from_monarch_estimate(self, capsys):
+        rows = [
+            ["PF Breakdown", "Amount", "Pct"],
+            ["US PF", "2542352.89", "88.18%"],
+            ["", "2542352.89"],
+        ]
+        with patch("sync.PF_BREAKDOWN_LABEL", "PF Breakdown"), \
+             patch("sync._read_sheet_rows", return_value=rows):
+            sync.print_pf_summary(monarch_us_pf=532685.0)
+        err = capsys.readouterr().err
+        assert "WARNING" in err
+        assert "GOOGLEFINANCE" in err
+
+    def test_no_warning_when_us_pf_within_tolerance(self, capsys):
+        rows = [
+            ["PF Breakdown", "Amount", "Pct"],
+            ["US PF", "540000.00", "70%"],
+            ["", "540000.00"],
+        ]
+        with patch("sync.PF_BREAKDOWN_LABEL", "PF Breakdown"), \
+             patch("sync._read_sheet_rows", return_value=rows):
+            sync.print_pf_summary(monarch_us_pf=532685.0)
+        err = capsys.readouterr().err
+        assert "GOOGLEFINANCE" not in err
+
+    def test_no_warning_when_monarch_estimate_not_provided(self, capsys):
+        rows = [
+            ["PF Breakdown", "Amount", "Pct"],
+            ["US PF", "2542352.89", "88%"],
+            ["", "2542352.89"],
+        ]
+        self._call(rows)  # no monarch_us_pf passed
+        err = capsys.readouterr().err
+        assert "GOOGLEFINANCE" not in err
+
 
 # ── get_monarch_account_id ────────────────────────────────────────────────────
 

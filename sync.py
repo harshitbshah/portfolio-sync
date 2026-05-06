@@ -386,7 +386,7 @@ def _find_bad_tickers(tab: str, ticker_col: int = 1, value_col: int = 4) -> list
     return bad
 
 
-def print_pf_summary() -> None:
+def print_pf_summary(monarch_us_pf: float | None = None) -> None:
     """Find 'PF Breakdown' header dynamically and print a parseable summary line."""
     rows = _read_sheet_rows()
 
@@ -440,6 +440,16 @@ def print_pf_summary() -> None:
             except ValueError:
                 components.append(f"{label} ${amount:,.2f}")
 
+        if label == "US PF" and monarch_us_pf is not None and monarch_us_pf > 0:
+            divergence = abs(amount - monarch_us_pf) / monarch_us_pf
+            if divergence > 0.25:
+                print(
+                    f"WARNING: US PF sheet value (${amount:,.0f}) diverges from "
+                    f"Monarch estimate (${monarch_us_pf:,.0f}) by {divergence:.0%} — "
+                    f"GOOGLEFINANCE may have bad prices",
+                    file=sys.stderr,
+                )
+
     parts = components + ([f"Total ${total:,.2f}"] if total else [])
     print(f"PF Summary: {' | '.join(parts)}")
 
@@ -478,6 +488,40 @@ def print_uninvested_cash(token: str) -> None:
                     if value >= 1.0:
                         print(f"[Cash] {name}: ${value:.2f}")
                     break
+
+
+# ── Step 5b-2: Fetch Monarch equity total for US PF sanity check ─────────────
+def get_monarch_us_pf_estimate(token: str) -> float:
+    """Sum Monarch's totalValue for equity holdings across all active brokerage accounts.
+
+    Used to sanity-check the sheet's GOOGLEFINANCE-computed US PF value.
+    """
+    accounts = get_monarch_accounts(token)
+    brokerage_ids = [
+        a["id"] for a in accounts
+        if a.get("type", {}).get("name") == "brokerage" and not a.get("deactivatedAt")
+    ]
+    _skip = _UNINVESTED_TICKERS | {"SGOV"}
+    total = 0.0
+    for account_id in brokerage_ids:
+        payload = json.dumps({
+            "query": _SGOV_HOLDINGS_QUERY,
+            "variables": {"accountId": account_id},
+        }).encode()
+        result = monarch_request(token, payload)
+        edges = (
+            result.get("data", {})
+            .get("portfolio", {})
+            .get("aggregateHoldings", {})
+            .get("edges", [])
+        )
+        for edge in edges:
+            node = edge.get("node", {})
+            holdings = node.get("holdings", [])
+            ticker = holdings[0].get("ticker", "") if holdings else ""
+            if ticker and ticker not in _skip and re.match(r"^[A-Z]{1,5}$", ticker):
+                total += node.get("totalValue", 0.0) or 0.0
+    return round(total, 2)
 
 
 # ── Step 5c: Print Emergency Fund breakdown ───────────────────────────────────
@@ -550,7 +594,11 @@ if __name__ == "__main__":
     print("\nFetching Monarch net worth...")
     print_net_worth(token)
 
+    print("\nFetching Monarch US PF estimate for sanity check...")
+    monarch_us_pf = get_monarch_us_pf_estimate(token)
+    print(f"  Monarch equity estimate: ${monarch_us_pf:,.2f}")
+
     print("\nReading PF summary...")
-    print_pf_summary()
+    print_pf_summary(monarch_us_pf=monarch_us_pf)
 
     print("\nDone.")
