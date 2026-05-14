@@ -357,6 +357,72 @@ def _get_or_create_tab(service, tab_name: str) -> int:
         ) from e
 
 
+def _sort_account_tab(service, sheet_id: int) -> None:
+    """Sort account tab rows alphabetically by (ticker, account)."""
+    col_a = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=SHEET_ID, range=f"'{ACCOUNT_TAB}'!A:A",
+             valueRenderOption="UNFORMATTED_VALUE")
+        .execute()
+        .get("values", [])
+    )
+    last_row = len(col_a)
+    if last_row <= 1:
+        return
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=SHEET_ID,
+        body={"requests": [{
+            "sortRange": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 1,
+                    "endRowIndex": last_row,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": 4,
+                },
+                "sortSpecs": [
+                    {"dimensionIndex": 0, "sortOrder": "ASCENDING"},
+                    {"dimensionIndex": 1, "sortOrder": "ASCENDING"},
+                ],
+            }
+        }]},
+    ).execute()
+
+
+def _repair_account_formulas(service) -> int:
+    """Rewrite column D Amount formulas using INDIRECT("C"&ROW()) so they survive row shifts.
+
+    Fixes any rows that still have old hardcoded =C{n}*GOOGLEFINANCE(...) formulas
+    written as text (RAW mode) from previous syncs.
+    """
+    col_a = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=SHEET_ID, range=f"'{ACCOUNT_TAB}'!A:A",
+             valueRenderOption="UNFORMATTED_VALUE")
+        .execute()
+        .get("values", [])
+    )
+    formula_data = []
+    for i, row in enumerate(col_a):
+        if i == 0:
+            continue  # header
+        ticker = str(row[0]).strip() if row else ""
+        if not ticker or not _TICKER_RE.match(ticker):
+            continue
+        formula_data.append({
+            "range": f"'{ACCOUNT_TAB}'!D{i + 1}",
+            "values": [[f'=INDIRECT("C"&ROW())*GOOGLEFINANCE("{ticker}")']],
+        })
+    if formula_data:
+        service.spreadsheets().values().batchUpdate(
+            spreadsheetId=SHEET_ID,
+            body={"valueInputOption": "USER_ENTERED", "data": formula_data},
+        ).execute()
+    return len(formula_data)
+
+
 def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
     """Incrementally sync the Holdings by Account tab (add/remove rows as needed).
 
@@ -506,17 +572,23 @@ def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
         service.spreadsheets().values().batchUpdate(
             spreadsheetId=SHEET_ID,
             body={
-                "valueInputOption": "RAW",
+                "valueInputOption": "USER_ENTERED",
                 "data": [
                     {
                         "range": f"'{ACCOUNT_TAB}'!A{insert_at + 1 + i}:D{insert_at + 1 + i}",
                         "values": [[t, a, new_data[(t, a)],
-                                    f'=C{insert_at + 1 + i}*GOOGLEFINANCE("{t}")']],
+                                    f'=INDIRECT("C"&ROW())*GOOGLEFINANCE("{t}")']],
                     }
                     for i, (t, a) in enumerate(new_rows)
                 ],
             },
         ).execute()
+
+    # ── Step 5: Sort + repair formulas whenever rows were added or removed ────
+    if to_add or to_remove:
+        _sort_account_tab(service, sheet_id)
+        n_fixed = _repair_account_formulas(service)
+        print(f"  Repaired {n_fixed} Amount formulas.")
 
     print(f"  Account tab: +{len(to_add)} added, -{len(to_remove)} removed, "
           f"{len(to_update)} updated.")
