@@ -348,27 +348,36 @@ class TestSyncAccountTab:
         assert "updateSheetProperties" in request_types
 
     def test_no_op_when_all_quantities_unchanged(self):
-        """No inserts/deletes/updates → no spreadsheet writes at all."""
+        """No inserts/deletes/qty-updates → sort and formula repair still run, no RAW qty writes."""
         rows = [["Ticker", "Account", "Qty"], ["AAPL", "IRA", 5.0]]
         svc = self._make_svc(rows)
         with patch("sync_us_portfolio._sheets_service", return_value=svc), \
              patch("sync_us_portfolio._get_or_create_tab", return_value=5):
             usp.sync_account_tab({"AAPL": {"IRA": 5.0}})
+        # Header not rewritten when already present
         svc.spreadsheets.return_value.values.return_value.update.assert_not_called()
-        svc.spreadsheets.return_value.values.return_value.batchUpdate.assert_not_called()
-        svc.spreadsheets.return_value.batchUpdate.assert_not_called()
+        # No RAW qty write — formula repair (USER_ENTERED) always runs, but no qty update
+        raw_calls = [
+            c for c in svc.spreadsheets.return_value.values.return_value.batchUpdate.call_args_list
+            if c[1].get("body", {}).get("valueInputOption") == "RAW"
+        ]
+        assert raw_calls == []
 
     def test_updates_changed_quantity(self):
-        """Existing row with different qty → values().batchUpdate() for that cell."""
+        """Existing row with different qty → the new qty appears in a batchUpdate call."""
         rows = [["Ticker", "Account", "Qty"], ["AAPL", "IRA", 5.0]]
         svc = self._make_svc(rows)
         with patch("sync_us_portfolio._sheets_service", return_value=svc), \
              patch("sync_us_portfolio._get_or_create_tab", return_value=5):
             usp.sync_account_tab({"AAPL": {"IRA": 7.0}})
         batch_update = svc.spreadsheets.return_value.values.return_value.batchUpdate
-        batch_update.assert_called_once()
-        data = batch_update.call_args[1]["body"]["data"]
-        assert any(7.0 in r["values"][0] for r in data)
+        batch_update.assert_called()
+        all_data = [
+            item
+            for call in batch_update.call_args_list
+            for item in call[1].get("body", {}).get("data", [])
+        ]
+        assert any(7.0 in r["values"][0] for r in all_data)
 
     def test_deletes_removed_rows_in_reverse_order(self):
         """Rows to remove are deleted highest row-number first."""
