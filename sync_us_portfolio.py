@@ -632,6 +632,7 @@ def sync(token: str) -> None:
         sheet_tickers = get_sheet_tickers()  # re-read after insertions
         print("  Sorting portfolio tab alphabetically...")
         sort_portfolio_sheet(sheet_tickers)
+        sheet_tickers = get_sheet_tickers()  # re-read after sort — rows shift
     else:
         print("No new positions to add.")
 
