@@ -625,7 +625,7 @@ def get_sheet_quantities() -> dict[str, float]:
 
 
 def sort_portfolio_sheet(sheet_tickers: list[tuple[int, str]]) -> None:
-    """Sort all data rows in the US Portfolio tab alphabetically by ticker (column B)."""
+    """Sort all data rows in the US Portfolio tab by holdings amount (col E) descending."""
     if not sheet_tickers:
         return
     grid_id = get_sheet_grid_id()
@@ -641,7 +641,7 @@ def sort_portfolio_sheet(sheet_tickers: list[tuple[int, str]]) -> None:
                     "startColumnIndex": 0,
                     "endColumnIndex": 7,       # columns A-G
                 },
-                "sortSpecs": [{"dimensionIndex": 1, "sortOrder": "ASCENDING"}],
+                "sortSpecs": [{"dimensionIndex": 4, "sortOrder": "DESCENDING"}],
             }
         }]},
     ).execute()
@@ -704,9 +704,6 @@ def sync(token: str) -> None:
             print(f"  {ticker:6s}: {qty:,.4f} shares (Theme/Conviction: fill manually)")
             print(f"[US] Added: {ticker} +{qty:,.6f}")
         sheet_tickers = get_sheet_tickers()  # re-read after insertions
-        print("  Sorting portfolio tab alphabetically...")
-        sort_portfolio_sheet(sheet_tickers)
-        sheet_tickers = get_sheet_tickers()  # re-read after sort — rows shift
     else:
         print("No new positions to add.")
 
@@ -725,7 +722,11 @@ def sync(token: str) -> None:
                 sign = "+" if diff >= 0 else ""
                 print(f"[US] Diff: {ticker} {sign}{diff:.2f}")
 
-    # ── Step 4: Sync Holdings by Account tab ─────────────────────────────────
+    # ── Step 4: Sort US Portfolio by holdings (Amount) descending ─────────────
+    print("\nSorting US Portfolio by holdings...")
+    sort_portfolio_sheet(sheet_tickers)
+
+    # ── Step 5: Sync Holdings by Account tab ─────────────────────────────────
     print("\nFetching per-account breakdown...")
     breakdown = get_holdings_by_account(token)
     sync_account_tab(breakdown)

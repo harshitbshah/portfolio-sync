@@ -446,7 +446,7 @@ class TestSortPortfolioSheet:
         req = batch_call.call_args[1]["body"]["requests"][0]
         assert "sortRange" in req
         sort = req["sortRange"]
-        assert sort["sortSpecs"][0]["sortOrder"] == "ASCENDING"
+        assert sort["sortSpecs"][0]["sortOrder"] == "DESCENDING"
         assert sort["range"]["startRowIndex"] == 1  # skips header
 
     def test_no_op_on_empty_tickers(self):
@@ -532,7 +532,7 @@ class TestSync:
             usp.sync("token")
         mock_sort.assert_called_once()
 
-    def test_sort_not_called_when_no_new_tickers(self):
+    def test_sort_always_called_even_when_no_new_tickers(self):
         with patch("sync_us_portfolio.get_all_holdings", return_value={"AAPL": 10.0}), \
              patch("sync_us_portfolio.get_sheet_tickers", return_value=[(2, "AAPL")]), \
              patch("sync_us_portfolio.get_sheet_quantities", return_value={"AAPL": 10.0}), \
@@ -541,7 +541,7 @@ class TestSync:
              patch("sync_us_portfolio.get_holdings_by_account", return_value={}), \
              patch("sync_us_portfolio.sync_account_tab"):
             usp.sync("token")
-        mock_sort.assert_not_called()
+        mock_sort.assert_called_once()
 
     def test_emits_closed_for_removed_position(self, capsys):
         self._run(
@@ -556,6 +556,7 @@ class TestSync:
              patch("sync_us_portfolio.get_sheet_tickers", return_value=[(2, "HROW")]), \
              patch("sync_us_portfolio.get_sheet_quantities", return_value={"HROW": 15.0}), \
              patch("sync_us_portfolio.update_quantities"), \
+             patch("sync_us_portfolio.sort_portfolio_sheet"), \
              patch("sync_us_portfolio.get_holdings_by_account", return_value=breakdown) as mock_gba, \
              patch("sync_us_portfolio.sync_account_tab") as mock_sat:
             usp.sync("token")
