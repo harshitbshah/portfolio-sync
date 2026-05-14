@@ -584,9 +584,8 @@ def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
             },
         ).execute()
 
-    # ── Step 5: Sort when rows were added or removed ──────────────────────────
-    if to_add or to_remove:
-        _sort_account_tab(service, sheet_id)
+    # ── Step 5: Sort by (ticker, account) ────────────────────────────────────
+    _sort_account_tab(service, sheet_id)
 
     # ── Step 6: Repair column D formulas (always — fixes legacy hardcoded refs) ─
     n_fixed = _repair_account_formulas(service)
