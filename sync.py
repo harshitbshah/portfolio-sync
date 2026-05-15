@@ -344,9 +344,15 @@ def update_google_sheet(balances: dict[int, float], sgov_total: float) -> None:
 
 # ── Step 5: Fetch Monarch net worth ───────────────────────────────────────────
 def print_net_worth(token: str) -> None:
-    """Fetch today's aggregate net worth from Monarch and emit a log line."""
+    """Fetch the most recent aggregate net worth from Monarch and emit a log line.
+
+    Queries a 2-day window ending today (UTC) so the call succeeds even when
+    run at midnight UTC, before Monarch has computed today's ET-date snapshot.
+    """
     import datetime
-    today = datetime.date.today().isoformat()
+    today = datetime.date.today()
+    start = (today - datetime.timedelta(days=1)).isoformat()
+    end = today.isoformat()
     payload = json.dumps({
         "query": """
         query GetAggregateSnapshots($filters: AggregateSnapshotFilters) {
@@ -356,13 +362,13 @@ def print_net_worth(token: str) -> None:
             }
         }
         """,
-        "variables": {"filters": {"startDate": today, "endDate": today}},
+        "variables": {"filters": {"startDate": start, "endDate": end}},
     }).encode()
     result = monarch_request(token, payload)
     snapshots = result.get("data", {}).get("aggregateSnapshots", [])
     if snapshots:
-        balance = snapshots[-1]["balance"]
-        print(f"[Monarch] Net Worth: ${balance:,.2f}")
+        snap = snapshots[-1]
+        print(f"[Monarch] Net Worth: ${snap['balance']:,.2f} (as of {snap['date']})")
     else:
         print("WARNING: No aggregate snapshot returned from Monarch", file=sys.stderr)
 
