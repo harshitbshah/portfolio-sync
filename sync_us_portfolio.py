@@ -625,12 +625,7 @@ def get_sheet_quantities() -> dict[str, float]:
 
 
 def sort_portfolio_sheet(sheet_tickers: list[tuple[int, str]]) -> None:
-    """Sort all data rows in the US Portfolio tab by quantity (col D) descending.
-
-    Sorts by column D (Quantity) rather than column E (Amount) because Amount
-    uses GOOGLEFINANCE formulas whose cached values may be 0 or stale when the
-    Sheets API evaluates the sortRange, producing no visible reorder.
-    """
+    """Sort all data rows in the US Portfolio tab by Amount (col E) descending."""
     if not sheet_tickers:
         return
     grid_id = get_sheet_grid_id()
@@ -646,7 +641,7 @@ def sort_portfolio_sheet(sheet_tickers: list[tuple[int, str]]) -> None:
                     "startColumnIndex": 0,
                     "endColumnIndex": 7,       # columns A-G
                 },
-                "sortSpecs": [{"dimensionIndex": 3, "sortOrder": "DESCENDING"}],
+                "sortSpecs": [{"dimensionIndex": 4, "sortOrder": "DESCENDING"}],
             }
         }]},
     ).execute()
