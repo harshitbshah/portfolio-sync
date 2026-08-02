@@ -47,6 +47,18 @@ class TestAnnualize:
         assert sw._annualize(25.0, cycle=3, frequency=0) == 300.0
 
 
+# ── _status_from_auto_renew() ─────────────────────────────────────────────────
+
+class TestStatusFromAutoRenew:
+    def test_all_renewing_is_subscribed(self):
+        assert sw._status_from_auto_renew([1]) == "Subscribed"
+        assert sw._status_from_auto_renew([1, 1]) == "Subscribed"
+
+    def test_any_not_renewing_is_expiring(self):
+        assert sw._status_from_auto_renew([0]) == "Expiring"
+        assert sw._status_from_auto_renew([1, 0]) == "Expiring"
+
+
 # ── build_desired_rows() ─────────────────────────────────────────────────────
 
 class TestBuildDesiredRows:
@@ -58,6 +70,7 @@ class TestBuildDesiredRows:
             "next_payment": "2026-08-08",
             "cycle": 4,
             "frequency": 1,
+            "auto_renew": 1,
             "notes": "Platform: Substack",
             "category": "Investing",
         }
@@ -88,6 +101,22 @@ class TestBuildDesiredRows:
     def test_extracts_platform_from_notes(self):
         desired = sw.build_desired_rows([self._row(notes="Platform: X")])
         assert desired["Some Newsletter"]["platform"] == "X"
+
+    def test_auto_renew_true_maps_to_subscribed(self):
+        desired = sw.build_desired_rows([self._row(auto_renew=1)])
+        assert desired["Some Newsletter"]["status"] == "Subscribed"
+
+    def test_auto_renew_false_maps_to_expiring(self):
+        desired = sw.build_desired_rows([self._row(auto_renew=0)])
+        assert desired["Some Newsletter"]["status"] == "Expiring"
+
+    def test_duplicate_names_expiring_if_any_not_renewing(self):
+        entries = [
+            self._row(name="Google One", auto_renew=1),
+            self._row(name="Google One", auto_renew=0),
+        ]
+        desired = sw.build_desired_rows(entries)
+        assert desired["Google One x2"]["status"] == "Expiring"
 
     def test_single_entry_uses_raw_expiring_date(self):
         desired = sw.build_desired_rows([self._row(next_payment="2026-09-16")])
@@ -156,7 +185,8 @@ class TestUpdateMatched:
     def test_writes_country_category_platform_price(self):
         svc = MagicMock()
         desired = {"Netflix": {"country": "United States", "category": "Streaming",
-                                "platform": "Netflix", "price": 100.0, "expiring": None}}
+                                "platform": "Netflix", "status": "Subscribed",
+                                "price": 100.0, "expiring": None}}
         sheet_subs = {"Netflix": {"row": 10}}
         sw.update_matched(svc, {"Netflix"}, desired, sheet_subs)
 
@@ -165,12 +195,26 @@ class TestUpdateMatched:
         assert "'Subscriptions'!C10" in ranges_written
         assert "'Subscriptions'!D10" in ranges_written
         assert "'Subscriptions'!E10" in ranges_written
+        assert "'Subscriptions'!G10" in ranges_written
         assert "'Subscriptions'!I10" in ranges_written
+
+    def test_writes_status_from_auto_renew(self):
+        svc = MagicMock()
+        desired = {"Netflix": {"country": "United States", "category": "Streaming",
+                                "platform": "Netflix", "status": "Expiring",
+                                "price": 100.0, "expiring": None}}
+        sheet_subs = {"Netflix": {"row": 10}}
+        sw.update_matched(svc, {"Netflix"}, desired, sheet_subs)
+
+        call_kwargs = svc.spreadsheets.return_value.values.return_value.batchUpdate.call_args[1]
+        by_range = {d["range"]: d["values"][0][0] for d in call_kwargs["body"]["data"]}
+        assert by_range["'Subscriptions'!G10"] == "Expiring"
 
     def test_skips_expiring_on_when_no_date(self):
         svc = MagicMock()
         desired = {"Netflix": {"country": "United States", "category": "Streaming",
-                                "platform": "Netflix", "price": 100.0, "expiring": None}}
+                                "platform": "Netflix", "status": "Subscribed",
+                                "price": 100.0, "expiring": None}}
         sheet_subs = {"Netflix": {"row": 10}}
         sw.update_matched(svc, {"Netflix"}, desired, sheet_subs)
 
@@ -181,7 +225,8 @@ class TestUpdateMatched:
     def test_writes_formatted_expiring_date_when_present(self):
         svc = MagicMock()
         desired = {"Netflix": {"country": "United States", "category": "Streaming",
-                                "platform": "Netflix", "price": 100.0, "expiring": "2026-08-07"}}
+                                "platform": "Netflix", "status": "Subscribed",
+                                "price": 100.0, "expiring": "2026-08-07"}}
         sheet_subs = {"Netflix": {"row": 10}}
         sw.update_matched(svc, {"Netflix"}, desired, sheet_subs)
 
@@ -208,7 +253,8 @@ class TestInsertNew:
     def test_insert_range_scoped_to_columns_c_through_i(self):
         svc = self._svc_with_grid_id()
         desired = {"New Sub": {"country": "United States", "category": "Investing",
-                                "platform": "Independent", "price": 50.0, "expiring": None}}
+                                "platform": "Independent", "status": "Subscribed",
+                                "price": 50.0, "expiring": None}}
         sheet_subs = {"Existing": {"row": 10}}
         sw.insert_new(svc, {"New Sub"}, desired, sheet_subs)
 
@@ -221,7 +267,8 @@ class TestInsertNew:
     def test_inserts_after_last_existing_row(self):
         svc = self._svc_with_grid_id()
         desired = {"New Sub": {"country": "United States", "category": "Investing",
-                                "platform": "Independent", "price": 50.0, "expiring": None}}
+                                "platform": "Independent", "status": "Subscribed",
+                                "price": 50.0, "expiring": None}}
         sheet_subs = {"Existing": {"row": 10}}
         sw.insert_new(svc, {"New Sub"}, desired, sheet_subs)
 
@@ -229,16 +276,17 @@ class TestInsertNew:
         data = values_call["body"]["data"]
         assert data[0]["range"] == f"'{sw.SUBSCRIPTIONS_TAB}'!C11:I11"
 
-    def test_writes_blank_status_for_new_rows(self):
+    def test_writes_status_from_desired_for_new_rows(self):
         svc = self._svc_with_grid_id()
         desired = {"New Sub": {"country": "United States", "category": "Investing",
-                                "platform": "Independent", "price": 50.0, "expiring": None}}
+                                "platform": "Independent", "status": "Expiring",
+                                "price": 50.0, "expiring": None}}
         sw.insert_new(svc, {"New Sub"}, desired, {})
 
         values_call = svc.spreadsheets.return_value.values.return_value.batchUpdate.call_args[1]
         row_values = values_call["body"]["data"][0]["values"][0]
         # Country, Category, Platform, Service, Status, Expiring On, Price
-        assert row_values == ["United States", "Investing", "Independent", "New Sub", "", "", 50.0]
+        assert row_values == ["United States", "Investing", "Independent", "New Sub", "Expiring", "", 50.0]
 
     def test_no_op_when_nothing_to_add(self):
         svc = MagicMock()

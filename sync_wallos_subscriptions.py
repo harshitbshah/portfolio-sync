@@ -5,8 +5,9 @@ Source of truth: Wallos SQLite DB (only active, i.e. non-inactive, subscriptions
 
 What this does each run:
   - Inserts a row for each Wallos subscription not yet in the sheet
-  - Updates Country/Category/Platform/Price/Expiring On for subscriptions already
-    in the sheet (Status is left untouched — Wallos has no equivalent field)
+  - Updates Country/Category/Platform/Status/Price/Expiring On for subscriptions
+    already in the sheet. Status is derived from Wallos's auto_renew flag
+    (1 → "Subscribed", 0 → "Expiring").
   - Never deletes rows. Sheet entries with no Wallos match are only reported —
     the sheet has long-standing manual entries that predate Wallos and haven't
     been backfilled into it yet, so auto-removal would be destructive.
@@ -96,6 +97,11 @@ def _annualize(price: float, cycle: int | None, frequency: int | None) -> float:
     return round(price * periods / max(frequency or 1, 1), 2)
 
 
+def _status_from_auto_renew(auto_renew_values: list[int]) -> str:
+    """"Subscribed" if every entry auto-renews, "Expiring" if any doesn't."""
+    return "Subscribed" if all(auto_renew_values) else "Expiring"
+
+
 # ── Wallos helpers ──────────────────────────────────────────────────────────
 
 def _wallos_query(sql: str) -> list[dict]:
@@ -117,7 +123,7 @@ def get_wallos_subscriptions() -> list[dict]:
     """Return raw active-subscription rows from Wallos, joined with category/currency names."""
     sql = (
         "SELECT s.name, s.price, cur.code AS currency, s.next_payment, "
-        "s.cycle, s.frequency, s.notes, cat.name AS category "
+        "s.cycle, s.frequency, s.auto_renew, s.notes, cat.name AS category "
         "FROM subscriptions s "
         "LEFT JOIN currencies cur ON s.currency_id = cur.id "
         "LEFT JOIN categories cat ON s.category_id = cat.id "
@@ -147,6 +153,7 @@ def build_desired_rows(raw_rows: list[dict]) -> dict[str, dict]:
             name, CATEGORY_MAP.get(wallos_category, "Miscellaneous")
         )
         platform = _parse_platform(first.get("notes"))
+        status = _status_from_auto_renew([e.get("auto_renew", 1) for e in entries])
 
         if len(entries) > 1:
             key = f"{name} x{len(entries)}"
@@ -164,6 +171,7 @@ def build_desired_rows(raw_rows: list[dict]) -> dict[str, dict]:
             "country": country,
             "category": sheet_category,
             "platform": platform,
+            "status": status,
             "price": price,
             "expiring": expiring,
         }
@@ -233,7 +241,7 @@ def _format_date(expiring: str | None) -> str | None:
 
 
 def update_matched(service, to_update: set[str], desired: dict, sheet_subs: dict) -> None:
-    """Overwrite Country/Category/Platform/Price (and Expiring On, if known)."""
+    """Overwrite Country/Category/Platform/Status/Price (and Expiring On, if known)."""
     data = []
     for key in to_update:
         row = sheet_subs[key]["row"]
@@ -241,6 +249,7 @@ def update_matched(service, to_update: set[str], desired: dict, sheet_subs: dict
         data.append({"range": f"'{SUBSCRIPTIONS_TAB}'!C{row}", "values": [[d["country"]]]})
         data.append({"range": f"'{SUBSCRIPTIONS_TAB}'!D{row}", "values": [[d["category"]]]})
         data.append({"range": f"'{SUBSCRIPTIONS_TAB}'!E{row}", "values": [[d["platform"]]]})
+        data.append({"range": f"'{SUBSCRIPTIONS_TAB}'!G{row}", "values": [[d["status"]]]})
         data.append({"range": f"'{SUBSCRIPTIONS_TAB}'!I{row}", "values": [[d["price"]]]})
         formatted_date = _format_date(d["expiring"])
         if formatted_date:
@@ -287,7 +296,7 @@ def insert_new(service, to_add: set[str], desired: dict, sheet_subs: dict) -> No
             "range": f"'{SUBSCRIPTIONS_TAB}'!C{row}:I{row}",
             "values": [[
                 d["country"], d["category"], d["platform"], key,
-                "",  # Status — no Wallos equivalent, left blank
+                d["status"],
                 formatted_date,
                 d["price"],
             ]],
