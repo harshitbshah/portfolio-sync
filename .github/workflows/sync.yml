@@ -84,6 +84,14 @@ jobs:
           GSHEET_SHEET_ID: ${{ vars.GSHEET_SHEET_ID }}
         run: set -o pipefail; python sync_us_portfolio.py 2>&1 | tee -a sync_output.txt
 
+      - name: Sync Wallos → Subscriptions sheet
+        env:
+          GSHEET_SERVICE_ACCOUNT_JSON: ${{ secrets.GSHEET_SERVICE_ACCOUNT_JSON }}
+          GSHEET_SHEET_ID: ${{ vars.GSHEET_SHEET_ID }}
+        # No WALLOS_SSH_HOST — this runner is self-hosted on the same OCI box as
+        # Wallos, so the script reads the SQLite DB file directly (via sudo).
+        run: set -o pipefail; python sync_wallos_subscriptions.py 2>&1 | tee -a sync_output.txt
+
       - name: Format success email
         if: success()
         id: format
