@@ -15,6 +15,7 @@ What this does each run:
     combined into one row named "{name} x{n}" with summed price, matching the
     sheet's existing convention (e.g. "Google One x2") and left without an
     Expiring On date since there's no single date to show.
+  - Sorts all rows by Expiring On ascending at the end of every run.
 
 Platform comes from Wallos's free-text `notes` field ("Platform: X" convention,
 since Wallos has no dedicated platform field).
@@ -307,6 +308,32 @@ def insert_new(service, to_add: set[str], desired: dict, sheet_subs: dict) -> No
     ).execute()
 
 
+def sort_by_expiring(service, last_row: int) -> None:
+    """Sort all data rows by Expiring On (column H) ascending.
+
+    Scoped to columns C:I only, like every other row operation here, so the
+    K:L pivot table (a separate Table object on the same rows) isn't touched.
+    """
+    if last_row < _FIRST_DATA_ROW:
+        return
+    grid_id = _get_tab_grid_id(service, SUBSCRIPTIONS_TAB)
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=SHEET_ID,
+        body={"requests": [{
+            "sortRange": {
+                "range": {
+                    "sheetId": grid_id,
+                    "startRowIndex": _FIRST_DATA_ROW - 1,
+                    "endRowIndex": last_row,
+                    "startColumnIndex": _COL_START,
+                    "endColumnIndex": _COL_END,
+                },
+                "sortSpecs": [{"dimensionIndex": 7, "sortOrder": "ASCENDING"}],  # H
+            }
+        }]},
+    ).execute()
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def sync() -> None:
@@ -344,6 +371,11 @@ def sync() -> None:
             f"\n{len(not_in_wallos)} sheet rows have no Wallos match "
             f"(not removed — review manually): {sorted(not_in_wallos)}"
         )
+
+    print("\nSorting by Expiring On (ascending)...")
+    original_last_row = max((s["row"] for s in sheet_subs.values()), default=_FIRST_DATA_ROW - 1)
+    last_row = original_last_row + len(to_add)
+    sort_by_expiring(service, last_row)
 
     print(f"\nDone. Updated {len(to_update)}, added {len(to_add)}, "
           f"{len(not_in_wallos)} unmatched sheet rows left untouched.")

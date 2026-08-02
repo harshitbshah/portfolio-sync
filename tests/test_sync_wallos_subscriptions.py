@@ -294,6 +294,41 @@ class TestInsertNew:
         svc.spreadsheets.return_value.batchUpdate.assert_not_called()
 
 
+# ── sort_by_expiring() ─────────────────────────────────────────────────────────
+
+class TestSortByExpiring:
+    def _mock_svc(self, grid_id=1986684834):
+        svc = MagicMock()
+        svc.spreadsheets.return_value.get.return_value.execute.return_value = {
+            "sheets": [{"properties": {"title": sw.SUBSCRIPTIONS_TAB, "sheetId": grid_id}}]
+        }
+        return svc
+
+    def test_sorts_by_column_h_ascending_scoped_to_c_through_i(self):
+        svc = self._mock_svc()
+        sw.sort_by_expiring(svc, last_row=10)
+
+        request = svc.spreadsheets.return_value.batchUpdate.call_args[1]["body"]["requests"][0]
+        sort_range = request["sortRange"]
+        assert sort_range["range"]["startColumnIndex"] == 2  # C
+        assert sort_range["range"]["endColumnIndex"] == 9    # exclusive, through I
+        assert sort_range["sortSpecs"] == [{"dimensionIndex": 7, "sortOrder": "ASCENDING"}]
+
+    def test_row_range_covers_first_data_row_through_last_row(self):
+        svc = self._mock_svc()
+        sw.sort_by_expiring(svc, last_row=10)
+
+        request = svc.spreadsheets.return_value.batchUpdate.call_args[1]["body"]["requests"][0]
+        sheet_range = request["sortRange"]["range"]
+        assert sheet_range["startRowIndex"] == sw._FIRST_DATA_ROW - 1
+        assert sheet_range["endRowIndex"] == 10
+
+    def test_no_op_on_empty_sheet(self):
+        svc = self._mock_svc()
+        sw.sort_by_expiring(svc, last_row=sw._FIRST_DATA_ROW - 1)
+        svc.spreadsheets.return_value.batchUpdate.assert_not_called()
+
+
 # ── _wallos_query() ────────────────────────────────────────────────────────────
 
 class TestWallosQuery:
