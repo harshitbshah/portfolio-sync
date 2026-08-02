@@ -82,6 +82,7 @@ CATEGORY_MAP = {
 NAME_CATEGORY_OVERRIDES = {
     "Monarch Money": "Personal",
     "Exponential View": "Tech Newsletter",
+    "1 Gbps Internet": "Streaming",
 }
 
 _PLATFORM_RE = re.compile(r"Platform:\s*(.+)")
