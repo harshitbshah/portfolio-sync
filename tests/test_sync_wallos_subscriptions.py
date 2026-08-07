@@ -324,6 +324,44 @@ class TestInsertNew:
         svc.spreadsheets.return_value.batchUpdate.assert_not_called()
 
 
+# ── delete_unmatched() ──────────────────────────────────────────────────────────
+
+class TestDeleteUnmatched:
+    def _svc_with_grid_id(self, grid_id=1986684834):
+        svc = MagicMock()
+        svc.spreadsheets.return_value.get.return_value.execute.return_value = {
+            "sheets": [{"properties": {"title": sw.SUBSCRIPTIONS_TAB, "sheetId": grid_id}}]
+        }
+        return svc
+
+    def test_delete_range_scoped_to_columns_c_through_i(self):
+        svc = self._svc_with_grid_id()
+        sheet_subs = {"Stale Sub": {"row": 10}}
+        sw.delete_unmatched(svc, {"Stale Sub"}, sheet_subs)
+
+        request = svc.spreadsheets.return_value.batchUpdate.call_args[1]["body"]["requests"][0]
+        delete_range = request["deleteRange"]
+        assert delete_range["range"]["startColumnIndex"] == 2  # C
+        assert delete_range["range"]["endColumnIndex"] == 9    # exclusive, through I
+        assert delete_range["range"]["startRowIndex"] == 9     # row 10, 0-indexed
+        assert delete_range["range"]["endRowIndex"] == 10
+        assert delete_range["shiftDimension"] == "ROWS"
+
+    def test_multiple_rows_deleted_highest_row_first(self):
+        svc = self._svc_with_grid_id()
+        sheet_subs = {"A": {"row": 5}, "B": {"row": 20}, "C": {"row": 12}}
+        sw.delete_unmatched(svc, {"A", "B", "C"}, sheet_subs)
+
+        requests = svc.spreadsheets.return_value.batchUpdate.call_args[1]["body"]["requests"]
+        rows_deleted = [r["deleteRange"]["range"]["startRowIndex"] + 1 for r in requests]
+        assert rows_deleted == [20, 12, 5]
+
+    def test_no_op_when_nothing_to_delete(self):
+        svc = MagicMock()
+        sw.delete_unmatched(svc, set(), {})
+        svc.spreadsheets.return_value.batchUpdate.assert_not_called()
+
+
 # ── sort_by_expiring() ─────────────────────────────────────────────────────────
 
 class TestSortByExpiring:

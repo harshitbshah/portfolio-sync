@@ -11,9 +11,10 @@ What this does each run:
   - Price is always written in USD — INR subscriptions are converted using the
     day's USD/INR rate (via frankfurter.app) since the sheet's Price column is
     USD-only.
-  - Never deletes rows. Sheet entries with no Wallos match are only reported —
-    the sheet has long-standing manual entries that predate Wallos and haven't
-    been backfilled into it yet, so auto-removal would be destructive.
+  - Deletes Sheet rows with no Wallos match (canceled/renamed-away-from
+    subscriptions). Wallos and the Sheet were fully reconciled 2026-08-02, so
+    an unmatched row now reliably means it's gone from Wallos, not a
+    legacy manual entry that predates Wallos.
   - Wallos subscriptions that share a name (e.g. two "Google One" entries) are
     combined into one row named "{name} x{n}" with summed price, matching the
     sheet's existing convention (e.g. "Google One x2") and left without an
@@ -280,6 +281,36 @@ def update_matched(service, to_update: set[str], desired: dict, sheet_subs: dict
         ).execute()
 
 
+def delete_unmatched(service, to_delete: set[str], sheet_subs: dict) -> None:
+    """Delete Sheet rows with no Wallos match, scoped to columns C:I only.
+
+    Rows are deleted highest-row-first within a single batch so earlier
+    deletions don't shift the row numbers of ones still pending.
+    """
+    if not to_delete:
+        return
+    grid_id = _get_tab_grid_id(service, SUBSCRIPTIONS_TAB)
+    rows = sorted((sheet_subs[key]["row"] for key in to_delete), reverse=True)
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=SHEET_ID,
+        body={"requests": [
+            {
+                "deleteRange": {
+                    "range": {
+                        "sheetId": grid_id,
+                        "startRowIndex": row - 1,
+                        "endRowIndex": row,
+                        "startColumnIndex": _COL_START,
+                        "endColumnIndex": _COL_END,
+                    },
+                    "shiftDimension": "ROWS",
+                }
+            }
+            for row in rows
+        ]},
+    ).execute()
+
+
 def insert_new(service, to_add: set[str], desired: dict, sheet_subs: dict) -> None:
     """Insert new rows, scoped to columns C:I only so the K:L pivot table is untouched."""
     if not to_add:
@@ -389,18 +420,18 @@ def sync() -> None:
         print("No new rows to add.")
 
     if not_in_wallos:
-        print(
-            f"\n{len(not_in_wallos)} sheet rows have no Wallos match "
-            f"(not removed — review manually): {sorted(not_in_wallos)}"
-        )
+        print(f"\nDeleting {len(not_in_wallos)} sheet rows with no Wallos match: {sorted(not_in_wallos)}")
+        delete_unmatched(service, not_in_wallos, sheet_subs)
+    else:
+        print("\nNo unmatched sheet rows to delete.")
 
     print("\nSorting by Expiring On (ascending)...")
     original_last_row = max((s["row"] for s in sheet_subs.values()), default=_FIRST_DATA_ROW - 1)
-    last_row = original_last_row + len(to_add)
+    last_row = original_last_row + len(to_add) - len(not_in_wallos)
     sort_by_expiring(service, last_row)
 
     print(f"\nDone. Updated {len(to_update)}, added {len(to_add)}, "
-          f"{len(not_in_wallos)} unmatched sheet rows left untouched.")
+          f"deleted {len(not_in_wallos)} unmatched sheet rows.")
 
 
 if __name__ == "__main__":
