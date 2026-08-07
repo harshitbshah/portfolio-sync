@@ -110,14 +110,6 @@ class TestBuildDesiredRows:
         desired = sw.build_desired_rows([self._row(auto_renew=0)])
         assert desired["Some Newsletter"]["status"] == "Expiring"
 
-    def test_duplicate_names_expiring_if_any_not_renewing(self):
-        entries = [
-            self._row(name="Google One", auto_renew=1),
-            self._row(name="Google One", auto_renew=0),
-        ]
-        desired = sw.build_desired_rows(entries)
-        assert desired["Google One x2"]["status"] == "Expiring"
-
     def test_single_entry_uses_raw_expiring_date(self):
         desired = sw.build_desired_rows([self._row(next_payment="2026-09-16")])
         assert desired["Some Newsletter"]["expiring"] == "2026-09-16"
@@ -126,24 +118,36 @@ class TestBuildDesiredRows:
         desired = sw.build_desired_rows([self._row(price=25.0, cycle=3, frequency=1)])
         assert desired["Some Newsletter"]["price"] == 300.0
 
-    def test_duplicate_names_combined_with_xn_suffix(self):
+    def test_duplicate_names_kept_as_separate_rows(self):
         entries = [self._row(name="Google One", price=20.0), self._row(name="Google One", price=20.0)]
         desired = sw.build_desired_rows(entries)
-        assert "Google One x2" in desired
-        assert "Google One" not in desired
+        assert "Google One" in desired
+        assert "Google One (2)" in desired
+        assert desired["Google One"]["price"] == 20.0
+        assert desired["Google One (2)"]["price"] == 20.0
 
-    def test_duplicate_names_sum_annualized_price(self):
+    def test_duplicate_names_keep_own_expiring_date(self):
         entries = [
-            self._row(name="Google One", price=20.0, cycle=4),
-            self._row(name="Google One", price=20.0, cycle=4),
+            self._row(name="Google One", next_payment="2027-05-16"),
+            self._row(name="Google One", next_payment="2027-04-22"),
         ]
         desired = sw.build_desired_rows(entries)
-        assert desired["Google One x2"]["price"] == 40.0
+        assert desired["Google One"]["expiring"] == "2027-05-16"
+        assert desired["Google One (2)"]["expiring"] == "2027-04-22"
 
-    def test_duplicate_names_have_no_expiring_date(self):
-        entries = [self._row(name="Google One"), self._row(name="Google One")]
+    def test_third_duplicate_gets_incrementing_suffix(self):
+        entries = [self._row(name="Google One") for _ in range(3)]
         desired = sw.build_desired_rows(entries)
-        assert desired["Google One x2"]["expiring"] is None
+        assert set(desired) == {"Google One", "Google One (2)", "Google One (3)"}
+
+    def test_duplicate_names_use_own_auto_renew_status(self):
+        entries = [
+            self._row(name="Google One", auto_renew=1),
+            self._row(name="Google One", auto_renew=0),
+        ]
+        desired = sw.build_desired_rows(entries)
+        assert desired["Google One"]["status"] == "Subscribed"
+        assert desired["Google One (2)"]["status"] == "Expiring"
 
     def test_inr_price_converted_to_usd(self):
         desired = sw.build_desired_rows(
@@ -167,13 +171,14 @@ class TestBuildDesiredRows:
         )
         assert desired["Some Newsletter"]["price"] == 120.0
 
-    def test_inr_conversion_applies_to_combined_rows(self):
+    def test_inr_conversion_applies_to_each_duplicate_separately(self):
         entries = [
             self._row(name="Google One", currency="INR", price=1000.0, cycle=4),
-            self._row(name="Google One", currency="INR", price=1000.0, cycle=4),
+            self._row(name="Google One", currency="INR", price=2000.0, cycle=4),
         ]
         desired = sw.build_desired_rows(entries, usd_inr_rate=100.0)
-        assert desired["Google One x2"]["price"] == 20.0
+        assert desired["Google One"]["price"] == 10.0
+        assert desired["Google One (2)"]["price"] == 20.0
 
 
 # ── get_sheet_subscriptions() ────────────────────────────────────────────────

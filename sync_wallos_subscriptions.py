@@ -16,9 +16,8 @@ What this does each run:
     an unmatched row now reliably means it's gone from Wallos, not a
     legacy manual entry that predates Wallos.
   - Wallos subscriptions that share a name (e.g. two "Google One" entries) are
-    combined into one row named "{name} x{n}" with summed price, matching the
-    sheet's existing convention (e.g. "Google One x2") and left without an
-    Expiring On date since there's no single date to show.
+    kept as separate rows so each keeps its own price and Expiring On date —
+    the 2nd+ occurrence of a name gets a " (2)", " (3)", ... suffix.
   - Sorts all rows by Expiring On ascending at the end of every run.
 
 Platform comes from Wallos's free-text `notes` field ("Platform: X" convention,
@@ -147,43 +146,31 @@ def get_wallos_subscriptions() -> list[dict]:
 
 
 def build_desired_rows(raw_rows: list[dict], usd_inr_rate: float = 1.0) -> dict[str, dict]:
-    """Group raw Wallos rows by name and build the desired sheet state.
+    """Build the desired sheet state, one row per raw Wallos subscription.
 
-    Subscriptions sharing a name are combined into one "{name} xN" row with
-    summed price and no Expiring On date (matches the sheet's "Google One x2"
-    convention — there's no single date to show for a combined row).
+    Subscriptions sharing a name (e.g. two "Google One" entries) are kept as
+    separate rows so each keeps its own price and Expiring On date — the
+    2nd+ occurrence of a name gets a " (2)", " (3)", ... suffix.
 
     The sheet's Price column is USD-only, so INR subscriptions are converted
     using usd_inr_rate after annualizing.
     """
-    groups: dict[str, list[dict]] = defaultdict(list)
-    for row in raw_rows:
-        groups[row["name"]].append(row)
-
+    name_counts: dict[str, int] = defaultdict(int)
     desired = {}
-    for name, entries in groups.items():
-        first = entries[0]
-        currency = first.get("currency") or ""
+    for row in raw_rows:
+        name = row["name"]
+        name_counts[name] += 1
+        key = name if name_counts[name] == 1 else f"{name} ({name_counts[name]})"
+
+        currency = row.get("currency") or ""
         country = CURRENCY_COUNTRY.get(currency, currency)
-        wallos_category = first.get("category") or ""
+        wallos_category = row.get("category") or ""
         sheet_category = NAME_CATEGORY_OVERRIDES.get(
             name, CATEGORY_MAP.get(wallos_category, "Miscellaneous")
         )
-        platform = _parse_platform(first.get("notes"))
-        status = _status_from_auto_renew([e.get("auto_renew", 1) for e in entries])
-
-        if len(entries) > 1:
-            key = f"{name} x{len(entries)}"
-            price = round(
-                sum(_annualize(e["price"], e.get("cycle"), e.get("frequency")) for e in entries),
-                2,
-            )
-            expiring = None
-        else:
-            key = name
-            price = _annualize(first["price"], first.get("cycle"), first.get("frequency"))
-            expiring = first.get("next_payment")
-
+        platform = _parse_platform(row.get("notes"))
+        status = _status_from_auto_renew([row.get("auto_renew", 1)])
+        price = _annualize(row["price"], row.get("cycle"), row.get("frequency"))
         if currency == "INR":
             price = round(price / usd_inr_rate, 2)
 
@@ -193,7 +180,7 @@ def build_desired_rows(raw_rows: list[dict], usd_inr_rate: float = 1.0) -> dict[
             "platform": platform,
             "status": status,
             "price": price,
-            "expiring": expiring,
+            "expiring": row.get("next_payment"),
         }
     return desired
 
