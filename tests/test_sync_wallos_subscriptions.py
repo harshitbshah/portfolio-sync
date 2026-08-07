@@ -145,6 +145,36 @@ class TestBuildDesiredRows:
         desired = sw.build_desired_rows(entries)
         assert desired["Google One x2"]["expiring"] is None
 
+    def test_inr_price_converted_to_usd(self):
+        desired = sw.build_desired_rows(
+            [self._row(currency="INR", price=1000.0, cycle=4, frequency=1)],
+            usd_inr_rate=100.0,
+        )
+        assert desired["Some Newsletter"]["price"] == 10.0
+
+    def test_usd_price_unaffected_by_rate(self):
+        desired = sw.build_desired_rows(
+            [self._row(currency="USD", price=100.0, cycle=4, frequency=1)],
+            usd_inr_rate=100.0,
+        )
+        assert desired["Some Newsletter"]["price"] == 100.0
+
+    def test_inr_conversion_applies_after_annualizing(self):
+        # Monthly, INR 1000/mo -> annualized 12000 INR -> converted at rate 100 -> $120
+        desired = sw.build_desired_rows(
+            [self._row(currency="INR", price=1000.0, cycle=3, frequency=1)],
+            usd_inr_rate=100.0,
+        )
+        assert desired["Some Newsletter"]["price"] == 120.0
+
+    def test_inr_conversion_applies_to_combined_rows(self):
+        entries = [
+            self._row(name="Google One", currency="INR", price=1000.0, cycle=4),
+            self._row(name="Google One", currency="INR", price=1000.0, cycle=4),
+        ]
+        desired = sw.build_desired_rows(entries, usd_inr_rate=100.0)
+        assert desired["Google One x2"]["price"] == 20.0
+
 
 # ── get_sheet_subscriptions() ────────────────────────────────────────────────
 
@@ -327,6 +357,28 @@ class TestSortByExpiring:
         svc = self._mock_svc()
         sw.sort_by_expiring(svc, last_row=sw._FIRST_DATA_ROW - 1)
         svc.spreadsheets.return_value.batchUpdate.assert_not_called()
+
+
+# ── get_usd_inr_rate() ──────────────────────────────────────────────────────────
+
+class TestGetUsdInrRate:
+    def test_returns_inr_rate_from_response(self):
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"amount": 1.0, "base": "USD", "rates": {"INR": 87.5}}
+        with patch("sync_wallos_subscriptions.requests.get", return_value=mock_response) as mock_get:
+            rate = sw.get_usd_inr_rate()
+        assert rate == 87.5
+        mock_get.assert_called_once()
+
+    def test_raises_on_http_error(self):
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = Exception("boom")
+        with patch("sync_wallos_subscriptions.requests.get", return_value=mock_response):
+            try:
+                sw.get_usd_inr_rate()
+                assert False, "expected an exception"
+            except Exception as e:
+                assert str(e) == "boom"
 
 
 # ── _wallos_query() ────────────────────────────────────────────────────────────

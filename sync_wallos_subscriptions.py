@@ -8,6 +8,9 @@ What this does each run:
   - Updates Country/Category/Platform/Status/Price/Expiring On for subscriptions
     already in the sheet. Status is derived from Wallos's auto_renew flag
     (1 → "Subscribed", 0 → "Expiring").
+  - Price is always written in USD — INR subscriptions are converted using the
+    day's USD/INR rate (via frankfurter.app) since the sheet's Price column is
+    USD-only.
   - Never deletes rows. Sheet entries with no Wallos match are only reported —
     the sheet has long-standing manual entries that predate Wallos and haven't
     been backfilled into it yet, so auto-removal would be destructive.
@@ -47,6 +50,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime
 
+import requests
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -99,6 +103,13 @@ def _annualize(price: float, cycle: int | None, frequency: int | None) -> float:
     return round(price * periods / max(frequency or 1, 1), 2)
 
 
+def get_usd_inr_rate() -> float:
+    """Fetch the current USD→INR rate (ECB reference rate via frankfurter.app)."""
+    r = requests.get("https://api.frankfurter.app/latest?from=USD&to=INR", timeout=10)
+    r.raise_for_status()
+    return r.json()["rates"]["INR"]
+
+
 def _status_from_auto_renew(auto_renew_values: list[int]) -> str:
     """"Subscribed" if every entry auto-renews, "Expiring" if any doesn't."""
     return "Subscribed" if all(auto_renew_values) else "Expiring"
@@ -134,12 +145,15 @@ def get_wallos_subscriptions() -> list[dict]:
     return _wallos_query(sql)
 
 
-def build_desired_rows(raw_rows: list[dict]) -> dict[str, dict]:
+def build_desired_rows(raw_rows: list[dict], usd_inr_rate: float = 1.0) -> dict[str, dict]:
     """Group raw Wallos rows by name and build the desired sheet state.
 
     Subscriptions sharing a name are combined into one "{name} xN" row with
     summed price and no Expiring On date (matches the sheet's "Google One x2"
     convention — there's no single date to show for a combined row).
+
+    The sheet's Price column is USD-only, so INR subscriptions are converted
+    using usd_inr_rate after annualizing.
     """
     groups: dict[str, list[dict]] = defaultdict(list)
     for row in raw_rows:
@@ -168,6 +182,9 @@ def build_desired_rows(raw_rows: list[dict]) -> dict[str, dict]:
             key = name
             price = _annualize(first["price"], first.get("cycle"), first.get("frequency"))
             expiring = first.get("next_payment")
+
+        if currency == "INR":
+            price = round(price / usd_inr_rate, 2)
 
         desired[key] = {
             "country": country,
@@ -338,9 +355,13 @@ def sort_by_expiring(service, last_row: int) -> None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def sync() -> None:
-    print("Fetching active subscriptions from Wallos...")
+    print("Fetching USD/INR exchange rate...")
+    usd_inr_rate = get_usd_inr_rate()
+    print(f"  1 USD = {usd_inr_rate} INR")
+
+    print("\nFetching active subscriptions from Wallos...")
     raw = get_wallos_subscriptions()
-    desired = build_desired_rows(raw)
+    desired = build_desired_rows(raw, usd_inr_rate)
     print(f"  {len(desired)} subscriptions (from {len(raw)} raw Wallos rows)")
 
     print(f"\nReading '{SUBSCRIPTIONS_TAB}' tab...")
