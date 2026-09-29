@@ -55,10 +55,10 @@ def parse(text: str) -> dict:
                 if m:
                     data["us_pf"]  = f"${m.group(1)}"
                     data["us_pct"] = m.group(2)
-                m = re.match(r"Cash \$([0-9,]+\.\d+) ([0-9.]+%)", part)
+                m = re.match(r"Cash (-?)\$([0-9,]+\.\d+) (-?[0-9.]+%)", part)
                 if m:
-                    data["cash"]     = f"${m.group(1)}"
-                    data["cash_pct"] = m.group(2)
+                    data["cash"]     = f"{m.group(1)}${m.group(2)}"
+                    data["cash_pct"] = m.group(3)
                 m = re.match(r"Total \$([0-9,]+\.\d+)", part)
                 if m:
                     data["total"] = f"${m.group(1)}"
@@ -195,10 +195,11 @@ def build_html(data: dict) -> str:
 
     cash_row = ""
     if data["cash"]:
+        cash_style = "color:#dc2626;" if cash.startswith("-") else ""
         cash_row = f"""
         <tr>
           <td style="padding:5px 0;color:#555;">Cash</td>
-          <td style="padding:5px 0;text-align:right;font-weight:500;">{cash}</td>
+          <td style="padding:5px 0;text-align:right;font-weight:500;{cash_style}">{cash}</td>
           <td style="padding:5px 0;text-align:right;color:#aaa;font-size:13px;padding-left:16px;">{cash_pct}</td>
         </tr>"""
 

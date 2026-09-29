@@ -228,6 +228,18 @@ class TestPrintPfSummary:
         out = capsys.readouterr().out
         assert "$234,629.00" in out
 
+    def test_negative_cash_preserves_sign(self, capsys):
+        """Cash can go negative (borrowing from emergency fund) — sign must survive."""
+        rows = [
+            ["PF Breakdown", "Amount", "Pct"],
+            ["Cash", "-11,000.00", "-1.40%"],
+            ["", "786961.00"],
+        ]
+        self._call(rows)
+        out = capsys.readouterr().out
+        assert "-$11,000.00" in out
+        assert "-1.40%" in out
+
     def test_header_found_in_non_first_column(self, capsys):
         rows = [
             ["Misc", "PF Breakdown", "Amount", "Pct"],

@@ -443,8 +443,8 @@ def print_pf_summary(monarch_us_pf: float | None = None) -> None:
 
         if amount_raw is None:
             break
-        amount_str = re.sub(r"[^\d.]", "", str(amount_raw))
-        if not amount_str:
+        amount_str = re.sub(r"[^\d.-]", "", str(amount_raw))
+        if not amount_str or amount_str == "-":
             if not label:
                 break  # totals row with bad value — nothing useful after this
             bad = _find_bad_tickers("US Portfolio") if label == "US PF" else []
@@ -452,6 +452,7 @@ def print_pf_summary(monarch_us_pf: float | None = None) -> None:
             print(f"  WARNING: {label} price data unavailable{detail} — skipping", file=sys.stderr)
             continue
         amount = float(amount_str)
+        amount_display = f"{'-' if amount < 0 else ''}${abs(amount):,.2f}"
 
         if not label:
             total = amount  # blank label = total row
@@ -463,9 +464,9 @@ def print_pf_summary(monarch_us_pf: float | None = None) -> None:
                     pct = float(pct_str[:-1])
                 else:
                     pct = float(pct_str) * 100
-                components.append(f"{label} ${amount:,.2f} {pct:.2f}%")
+                components.append(f"{label} {amount_display} {pct:.2f}%")
             except ValueError:
-                components.append(f"{label} ${amount:,.2f}")
+                components.append(f"{label} {amount_display}")
 
         if label == "US PF" and monarch_us_pf is not None and monarch_us_pf > 0:
             divergence = abs(amount - monarch_us_pf) / monarch_us_pf

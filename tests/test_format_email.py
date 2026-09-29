@@ -82,6 +82,13 @@ class TestParse:
         assert data["cash"] == "$50.00"
         assert data["cash_pct"] == "25%"
 
+    def test_parses_negative_cash(self):
+        """Negative cash (borrowing from emergency fund) must keep its sign, incl. negative pct."""
+        log = "PF Summary: Indian PF $100.00 50% | Cash -$11,000.00 -1.40% | Total $200.00\n"
+        data = fe.parse(log)
+        assert data["cash"] == "-$11,000.00"
+        assert data["cash_pct"] == "-1.40%"
+
     def test_cash_none_when_absent(self):
         log = "PF Summary: Indian PF $100.00 50% | US PF $100.00 50% | Total $200.00\n"
         data = fe.parse(log)
@@ -339,6 +346,15 @@ class TestBuildHtml:
     def test_cash_row_hidden_when_absent(self):
         html = fe.build_html(self._quiet(cash=None, cash_pct=None))
         assert "Cash" not in html
+
+    def test_negative_cash_row_shown_in_red(self):
+        html = fe.build_html(self._quiet(cash="-$11,000.00", cash_pct="-1.40%"))
+        assert "-$11,000.00" in html
+        assert "#dc2626" in html
+
+    def test_positive_cash_row_not_colored_red(self):
+        html = fe.build_html(self._quiet(cash="$112,907.25", cash_pct="14.64%"))
+        assert "#dc2626" not in html
 
     def test_includes_run_url(self):
         html = fe.build_html(self._quiet())
