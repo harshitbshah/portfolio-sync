@@ -617,6 +617,18 @@ def sync_account_tab(breakdown: dict[str, dict[str, float]]) -> None:
           f"{len(to_update)} updated.")
 
 
+def find_duplicate_tickers(sheet_tickers: list[tuple[int, str]]) -> dict[str, list[int]]:
+    """Return {ticker: [row, ...]} for tickers that appear on more than one row.
+
+    Updates are keyed by ticker, so only one row of a duplicated ticker ever
+    gets written — the others silently go stale and inflate the sheet total.
+    """
+    rows_by_ticker: dict[str, list[int]] = defaultdict(list)
+    for row, ticker in sheet_tickers:
+        rows_by_ticker[ticker].append(row)
+    return {t: rows for t, rows in sorted(rows_by_ticker.items()) if len(rows) > 1}
+
+
 def get_sheet_quantities() -> dict[str, float]:
     """Return {ticker: quantity} for all equity rows currently in the sheet."""
     service = _sheets_service(readonly=True)
@@ -729,6 +741,12 @@ def sync(cookie: str) -> None:
         print("No new positions to add.")
 
     # ── Step 3: Update existing quantities ───────────────────────────────────
+    duplicates = find_duplicate_tickers(sheet_tickers)
+    # Row numbers aren't reported: the sort in Step 4 moves them.
+    for ticker, rows in duplicates.items():
+        print(f"WARNING: {ticker} appears on {len(rows)} '{US_PORTFOLIO_TAB}' rows — "
+              f"only one is synced; delete the stale row(s)")
+
     print(f"\nUpdating {len(to_update)} existing positions...")
     if to_update:
         old_quantities = get_sheet_quantities()
@@ -739,6 +757,9 @@ def sync(cookie: str) -> None:
             old_qty = round(old_quantities.get(ticker, 0.0), 6)
             diff = round(new_qty - old_qty, 6)
             print(f"  {ticker:6s} → D{ticker_to_row[ticker]}: {holdings[ticker]:,.4f}")
+            # Old qty for a duplicated ticker could come from either row, so the diff is meaningless.
+            if ticker in duplicates:
+                continue
             if abs(diff) >= _MIN_REPORTABLE_DIFF:
                 sign = "+" if diff >= 0 else ""
                 print(f"[US] Diff: {ticker} {sign}{diff:.2f}")

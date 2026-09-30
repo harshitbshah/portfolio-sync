@@ -435,6 +435,15 @@ class TestSyncAccountTab:
 
 # ── sort_portfolio_sheet() ────────────────────────────────────────────────────
 
+class TestFindDuplicateTickers:
+    def test_returns_rows_for_duplicated_ticker(self):
+        tickers = [(2, "MU"), (16, "AXON"), (17, "AXON")]
+        assert usp.find_duplicate_tickers(tickers) == {"AXON": [16, 17]}
+
+    def test_empty_when_all_unique(self):
+        assert usp.find_duplicate_tickers([(2, "MU"), (3, "AXON")]) == {}
+
+
 class TestSortPortfolioSheet:
     def test_issues_sort_range_request(self):
         svc = MagicMock()
@@ -549,6 +558,32 @@ class TestSync:
             sheet_tickers=[(2, "ZS")],
         )
         assert "[US] Closed: ZS" in capsys.readouterr().out
+
+    def test_warns_on_duplicate_ticker(self, capsys):
+        self._run(
+            holdings={"AXON": 66.45},
+            sheet_tickers=[(16, "AXON"), (17, "AXON")],
+            old_quantities={"AXON": 37.2},
+        )
+        out = capsys.readouterr().out
+        assert "WARNING: AXON appears on 2 'US Portfolio' rows" in out
+
+    def test_no_diff_for_duplicate_ticker(self, capsys):
+        # Old qty could come from the stale row, so any diff would be bogus.
+        self._run(
+            holdings={"AXON": 66.45},
+            sheet_tickers=[(16, "AXON"), (17, "AXON")],
+            old_quantities={"AXON": 1.64},
+        )
+        assert "[US] Diff: AXON" not in capsys.readouterr().out
+
+    def test_no_warning_without_duplicates(self, capsys):
+        self._run(
+            holdings={"AXON": 66.45, "MU": 77.0},
+            sheet_tickers=[(2, "AXON"), (3, "MU")],
+            old_quantities={"AXON": 66.45, "MU": 77.0},
+        )
+        assert "WARNING" not in capsys.readouterr().out
 
     def test_calls_sync_account_tab(self):
         breakdown = {"HROW": {"IRA": 5.0, "Individual": 10.0}}
