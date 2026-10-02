@@ -14,12 +14,10 @@ jobs:
     permissions:
       contents: read
       actions: write       # needed to update KITE_ENCTOKEN_CACHE variable after fresh login
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -102,7 +100,7 @@ jobs:
 
       - name: Send success email
         if: success()
-        uses: dawidd6/action-send-mail@v3
+        uses: dawidd6/action-send-mail@v22
         with:
           server_address: smtp.gmail.com
           server_port: 465
@@ -115,7 +113,7 @@ jobs:
 
       - name: Send failure email
         if: failure()
-        uses: dawidd6/action-send-mail@v3
+        uses: dawidd6/action-send-mail@v22
         with:
           server_address: smtp.gmail.com
           server_port: 465
