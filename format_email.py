@@ -359,8 +359,8 @@ def build_html(data: dict) -> str:
 
 def build_subject(data: dict) -> str:
     emoji = "⚠️" if data["warnings"] else "✅"
-    total = data["total"] or ""
-    return f"{emoji} Portfolio sync | {total}"
+    headline = data["net_worth"] or data["total"] or ""
+    return f"{emoji} Portfolio sync | {headline}"
 
 
 if __name__ == "__main__":

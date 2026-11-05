@@ -252,6 +252,7 @@ class TestParse:
 class TestBuildSubject:
     def _d(self, **kw):
         base = {
+            "net_worth": None,
             "total": "$786,962.00",
             "cash": None,
             "cash_pct": None,
@@ -276,6 +277,11 @@ class TestBuildSubject:
     def test_includes_total(self):
         subj = fe.build_subject(self._d())
         assert "$786,962.00" in subj
+
+    def test_prefers_net_worth_over_total(self):
+        subj = fe.build_subject(self._d(net_worth="$1,144,966.35"))
+        assert "$1,144,966.35" in subj
+        assert "$786,962.00" not in subj
 
     def test_never_has_no_changes_suffix(self):
         assert "no changes" not in fe.build_subject(self._d())
