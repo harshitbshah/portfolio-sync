@@ -91,16 +91,13 @@ NAME_CATEGORY_OVERRIDES = {
 
 _PLATFORM_RE = re.compile(r"Platform:\s*(.+)")
 
-# Wallos cycle id → periods per year (Daily=1, Weekly=2, Monthly=3, Yearly=4).
-# The sheet's Price column is an annual total (confirmed by every existing
-# Yearly-cycle entry, where price == annual cost) — Wallos stores price per
-# billing cycle, so non-Yearly entries must be annualized before writing.
-_CYCLE_PERIODS_PER_YEAR = {1: 365, 2: 52, 3: 12, 4: 1}
-
+# Price semantics for the sheet (changed 2026-11-13):
+# The sheet's Price column is PER-CYCLE (Harshit's rule, 2026-11-13):
+# annualizing was the old behavior and is wrong — it overwrote the
+# per-cycle values Harshit maintains by hand. Write Wallos's price as-is.
 
 def _annualize(price: float, cycle: int | None, frequency: int | None) -> float:
-    periods = _CYCLE_PERIODS_PER_YEAR.get(cycle, 1)
-    return round(price * periods / max(frequency or 1, 1), 2)
+    return round(price, 2)
 
 
 def get_usd_inr_rate() -> float:
@@ -153,7 +150,7 @@ def build_desired_rows(raw_rows: list[dict], usd_inr_rate: float = 1.0) -> dict[
     2nd+ occurrence of a name gets a " (2)", " (3)", ... suffix.
 
     The sheet's Price column is USD-only, so INR subscriptions are converted
-    using usd_inr_rate after annualizing.
+    using usd_inr_rate.
     """
     name_counts: dict[str, int] = defaultdict(int)
     desired = {}
