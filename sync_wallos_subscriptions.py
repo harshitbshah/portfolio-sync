@@ -61,7 +61,8 @@ WALLOS_DB_PATH = os.getenv("WALLOS_DB_PATH", "/home/ubuntu/wallos/db/wallos.db")
 WALLOS_SSH_HOST = os.getenv("WALLOS_SSH_HOST")
 
 # Data columns in the Subscriptions tab (a second, unrelated Category/Total
-# pivot table lives in columns K:L on the same rows — never touch outside C:I).
+# pivot table lives in columns K:L on the same rows — reads/writes stay
+# inside C:I; row deletions remove the whole row, see delete_unmatched).
 _FIRST_DATA_ROW = 4
 _COL_START = 2  # C (0-indexed)
 _COL_END = 9    # exclusive → covers C:I
@@ -266,7 +267,15 @@ def update_matched(service, to_update: set[str], desired: dict, sheet_subs: dict
 
 
 def delete_unmatched(service, to_delete: set[str], sheet_subs: dict) -> None:
-    """Delete Sheet rows with no Wallos match, scoped to columns C:I only.
+    """Delete Sheet rows with no Wallos match, as whole rows.
+
+    Uses deleteDimension (the entire row) instead of a column-scoped
+    deleteRange: the Subscriptions data is a Sheets Table object, and the
+    API rejects deleting cells that cover only part of a table ("You
+    cannot insert or delete cells over part of a table" — the sync
+    failures of 2026-11-13 and 2026-11-14). Deleting the whole row also
+    keeps the row's cells outside C:I (J Cycle, L) aligned with the rows
+    below; a scoped deleteRange shift would have left them behind.
 
     Rows are deleted highest-row-first within a single batch so earlier
     deletions don't shift the row numbers of ones still pending.
@@ -279,15 +288,13 @@ def delete_unmatched(service, to_delete: set[str], sheet_subs: dict) -> None:
         spreadsheetId=SHEET_ID,
         body={"requests": [
             {
-                "deleteRange": {
+                "deleteDimension": {
                     "range": {
                         "sheetId": grid_id,
-                        "startRowIndex": row - 1,
-                        "endRowIndex": row,
-                        "startColumnIndex": _COL_START,
-                        "endColumnIndex": _COL_END,
+                        "dimension": "ROWS",
+                        "startIndex": row - 1,
+                        "endIndex": row,
                     },
-                    "shiftDimension": "ROWS",
                 }
             }
             for row in rows
