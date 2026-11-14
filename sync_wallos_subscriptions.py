@@ -101,6 +101,23 @@ def _annualize(price: float, cycle: int | None, frequency: int | None) -> float:
     return round(price, 2)
 
 
+# Wallos cycle ids: Daily=1, Weekly=2, Monthly=3, Yearly=4 (the same ids the
+# pre-2026-11-13 annualizer used); frequency = every N cycles. The sheet's
+# Cycle column (J) only holds Monthly / Quarterly / Yearly, so derive the
+# months between payments and map 1 -> Monthly, 3 -> Quarterly, 12 -> Yearly.
+# Any other cadence (daily/weekly, every-2-months, multi-year) has no sheet
+# value: return None and the caller leaves column J untouched for that row.
+def _sheet_cycle(cycle: int | None, frequency: int | None) -> str | None:
+    freq = max(frequency or 1, 1)
+    if cycle == 3:
+        months = freq
+    elif cycle == 4:
+        months = 12 * freq
+    else:
+        return None
+    return {1: "Monthly", 3: "Quarterly", 12: "Yearly"}.get(months)
+
+
 def get_usd_inr_rate() -> float:
     """Fetch the current USD→INR rate (ECB reference rate via frankfurter.app)."""
     r = requests.get("https://api.frankfurter.app/latest?from=USD&to=INR", timeout=10)
@@ -178,6 +195,7 @@ def build_desired_rows(raw_rows: list[dict], usd_inr_rate: float = 1.0) -> dict[
             "platform": platform,
             "status": status,
             "price": price,
+            "cycle": _sheet_cycle(row.get("cycle"), row.get("frequency")),
             "expiring": row.get("next_payment"),
         }
     return desired
@@ -207,14 +225,14 @@ def _get_tab_grid_id(service, tab_name: str) -> int:
 
 
 def get_sheet_subscriptions() -> dict[str, dict]:
-    """Return {service_name: {row, country, category, platform, status, expiring, price}}."""
+    """Return {service_name: {row, country, category, platform, status, expiring, price, cycle}}."""
     service = _sheets_service(readonly=True)
     result = (
         service.spreadsheets()
         .values()
         .get(
             spreadsheetId=SHEET_ID,
-            range=f"'{SUBSCRIPTIONS_TAB}'!C{_FIRST_DATA_ROW}:I",
+            range=f"'{SUBSCRIPTIONS_TAB}'!C{_FIRST_DATA_ROW}:J",
             valueRenderOption="UNFORMATTED_VALUE",
         )
         .execute()
@@ -234,6 +252,7 @@ def get_sheet_subscriptions() -> dict[str, dict]:
             "status": row[4] if len(row) > 4 else "",
             "expiring": row[5] if len(row) > 5 else "",
             "price": row[6] if len(row) > 6 else "",
+            "cycle": row[7] if len(row) > 7 else "",
         }
     return subs
 
@@ -348,6 +367,37 @@ def insert_new(service, to_add: set[str], desired: dict, sheet_subs: dict) -> No
     ).execute()
 
 
+def update_cycles(service, desired: dict) -> list[str]:
+    """Write the Cycle column (J) from Wallos, after all row moves settle.
+
+    Runs last in sync(): the update/insert/delete/sort steps are all scoped
+    to columns C:I, and a scoped sort would leave J behind for any row that
+    moved, so Cycle is written against a fresh read of final row positions.
+    Returns the names whose Wallos cadence has no sheet Cycle value (their
+    J cells are left untouched).
+    """
+    sheet_subs = get_sheet_subscriptions()
+    data = []
+    unmapped = []
+    for key, d in desired.items():
+        cycle = d.get("cycle")
+        if cycle is None:
+            unmapped.append(key)
+            continue
+        entry = sheet_subs.get(key)
+        if entry and entry.get("cycle") != cycle:
+            data.append({
+                "range": f"'{SUBSCRIPTIONS_TAB}'!J{entry['row']}",
+                "values": [[cycle]],
+            })
+    if data:
+        service.spreadsheets().values().batchUpdate(
+            spreadsheetId=SHEET_ID,
+            body={"valueInputOption": "USER_ENTERED", "data": data},
+        ).execute()
+    return unmapped
+
+
 def sort_by_expiring(service, last_row: int) -> None:
     """Sort all data rows by Expiring On (column H) ascending.
 
@@ -420,6 +470,13 @@ def sync() -> None:
     original_last_row = max((s["row"] for s in sheet_subs.values()), default=_FIRST_DATA_ROW - 1)
     last_row = original_last_row + len(to_add) - len(not_in_wallos)
     sort_by_expiring(service, last_row)
+
+    print("\nWriting Cycle column (J) from Wallos...")
+    unmapped = update_cycles(service, desired)
+    if unmapped:
+        print(f"  WARNING: no sheet Cycle value for: {sorted(unmapped)} — column J left as-is")
+    else:
+        print("  Cycle column set from Wallos for every subscription.")
 
     print(f"\nDone. Updated {len(to_update)}, added {len(to_add)}, "
           f"deleted {len(not_in_wallos)} unmatched sheet rows.")
