@@ -86,7 +86,7 @@ CATEGORY_MAP = {
     "Software": "Software & Tools",
     "Banking": "Personal",
     "News & Magazines": "News",
-    "Interview Preparation": "Interview Prep",
+    "Interview Preparation": "Career Growth",
 }
 
 NAME_CATEGORY_OVERRIDES = {
