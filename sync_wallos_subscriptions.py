@@ -72,16 +72,21 @@ CURRENCY_COUNTRY = {"USD": "United States", "INR": "India"}
 # Wallos category → sheet category. Sheet category assignment is content-based,
 # not a pure function of Wallos's category name — this is the best general
 # mapping; NAME_CATEGORY_OVERRIDES below fixes the known exceptions.
+# Recategorized 2026-11-14 (Harshit's request): the old map flattened most
+# Wallos categories to Miscellaneous (14 of 31 active subs); each Wallos
+# category now lands in a meaningful sheet category, and Miscellaneous is
+# only the fallback for Wallos categories with no mapping.
 CATEGORY_MAP = {
     "Entertainment": "Streaming",
     "Investing": "Investing",
-    "Shopping": "Miscellaneous",
-    "Education": "Miscellaneous",
-    "Cloud Services": "Miscellaneous",
-    "Productivity": "Miscellaneous",
-    "Software": "Miscellaneous",
-    "Banking": "Miscellaneous",
+    "Shopping": "Shopping",
+    "Education": "Learning",
+    "Cloud Services": "Cloud Services",
+    "Productivity": "Software & Tools",
+    "Software": "Software & Tools",
+    "Banking": "Personal",
     "News & Magazines": "News",
+    "Interview Preparation": "Interview Prep",
 }
 
 NAME_CATEGORY_OVERRIDES = {
