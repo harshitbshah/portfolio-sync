@@ -85,6 +85,7 @@ def monarch_request(cookie: str, payload: bytes) -> dict:
     now requires a session_id + csrftoken cookie pulled from a logged-in
     browser (see monarch-mcp-server login_setup docs for how to refresh it).
     """
+    import urllib.error
     import urllib.request
     req = urllib.request.Request(
         "https://api.monarch.com/graphql",
@@ -103,8 +104,18 @@ def monarch_request(cookie: str, payload: bytes) -> dict:
             ),
         },
     )
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise RuntimeError(
+                "MONARCH_COOKIE expired or invalid — Monarch returned "
+                f"HTTP {e.code}. Refresh the MONARCH_COOKIE secret in the "
+                "portfolio-sync repo from a signed-in app.monarch.com "
+                "session (session_id + csrftoken cookies), then re-run."
+            ) from e
+        raise
 
 
 def get_monarch_accounts(cookie: str) -> list:
