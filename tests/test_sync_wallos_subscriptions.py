@@ -1,4 +1,6 @@
 import subprocess
+
+import pytest
 from unittest.mock import MagicMock, patch
 
 import sync_wallos_subscriptions as sw
@@ -22,29 +24,53 @@ class TestParsePlatform:
 
 
 # ── _annualize() ─────────────────────────────────────────────────────────────
+# Since 2026-11-13 the sheet stores the per-cycle price (Cycle column J says how
+# often), so _annualize no longer scales by cycle/frequency — it only rounds.
 
 class TestAnnualize:
-    def test_yearly_cycle_unchanged(self):
-        assert sw._annualize(100.0, cycle=4, frequency=1) == 100.0
+    @pytest.mark.parametrize("cycle,frequency", [
+        (1, 1),        # daily
+        (2, 1),        # weekly
+        (3, 1),        # monthly
+        (3, 2),        # every 2 months
+        (4, 1),        # yearly
+        (3, 0),        # zero frequency — no divide-by-zero
+        (None, None),  # unknown cycle
+    ])
+    def test_price_is_per_cycle_not_annualized(self, cycle, frequency):
+        assert sw._annualize(25.0, cycle=cycle, frequency=frequency) == 25.0
 
-    def test_monthly_cycle_multiplied_by_twelve(self):
-        assert sw._annualize(25.0, cycle=3, frequency=1) == 300.0
+    def test_rounds_to_cents(self):
+        assert sw._annualize(9.999, cycle=3, frequency=1) == 10.0
+        assert sw._annualize(4.994, cycle=3, frequency=1) == 4.99
 
-    def test_weekly_cycle_multiplied_by_fifty_two(self):
-        assert sw._annualize(10.0, cycle=2, frequency=1) == 520.0
 
-    def test_daily_cycle_multiplied_by_365(self):
-        assert sw._annualize(1.0, cycle=1, frequency=1) == 365.0
+# ── _sheet_cycle() ───────────────────────────────────────────────────────────
 
-    def test_frequency_divides_periods(self):
-        # Billed every 2 months → 6 times/year, not 12.
-        assert sw._annualize(25.0, cycle=3, frequency=2) == 150.0
+class TestSheetCycle:
+    @pytest.mark.parametrize("cycle,frequency,expected", [
+        (3, 1, "Monthly"),
+        (3, 3, "Quarterly"),
+        (3, 12, "Yearly"),     # every 12 months
+        (4, 1, "Yearly"),
+        (3, None, "Monthly"),  # missing frequency treated as 1
+        (3, 0, "Monthly"),     # zero frequency treated as 1
+        (4, None, "Yearly"),
+    ])
+    def test_maps_to_sheet_values(self, cycle, frequency, expected):
+        assert sw._sheet_cycle(cycle, frequency) == expected
 
-    def test_unknown_cycle_defaults_to_unchanged(self):
-        assert sw._annualize(100.0, cycle=None, frequency=None) == 100.0
-
-    def test_zero_frequency_does_not_divide_by_zero(self):
-        assert sw._annualize(25.0, cycle=3, frequency=0) == 300.0
+    @pytest.mark.parametrize("cycle,frequency", [
+        (1, 1),        # daily — no sheet value
+        (2, 1),        # weekly
+        (3, 2),        # every 2 months
+        (3, 6),        # semi-annual
+        (4, 2),        # every 2 years
+        (None, None),  # unknown
+        (99, 1),       # unrecognised Wallos id
+    ])
+    def test_unmappable_cadence_returns_none(self, cycle, frequency):
+        assert sw._sheet_cycle(cycle, frequency) is None
 
 
 # ── _status_from_auto_renew() ─────────────────────────────────────────────────
@@ -114,9 +140,22 @@ class TestBuildDesiredRows:
         desired = sw.build_desired_rows([self._row(next_payment="2026-09-16")])
         assert desired["Some Newsletter"]["expiring"] == "2026-09-16"
 
-    def test_single_entry_annualizes_price(self):
+    def test_single_entry_keeps_per_cycle_price(self):
         desired = sw.build_desired_rows([self._row(price=25.0, cycle=3, frequency=1)])
-        assert desired["Some Newsletter"]["price"] == 300.0
+        assert desired["Some Newsletter"]["price"] == 25.0
+
+    @pytest.mark.parametrize("cycle,frequency,expected", [
+        (3, 1, "Monthly"), (3, 3, "Quarterly"), (4, 1, "Yearly"), (2, 1, None),
+    ])
+    def test_cycle_derived_from_wallos(self, cycle, frequency, expected):
+        desired = sw.build_desired_rows([self._row(cycle=cycle, frequency=frequency)])
+        assert desired["Some Newsletter"]["cycle"] == expected
+
+    def test_missing_cycle_fields_give_none(self):
+        row = self._row()
+        del row["cycle"], row["frequency"]
+        desired = sw.build_desired_rows([row])
+        assert desired["Some Newsletter"]["cycle"] is None
 
     def test_duplicate_names_kept_as_separate_rows(self):
         entries = [self._row(name="Google One", price=20.0), self._row(name="Google One", price=20.0)]
@@ -163,13 +202,14 @@ class TestBuildDesiredRows:
         )
         assert desired["Some Newsletter"]["price"] == 100.0
 
-    def test_inr_conversion_applies_after_annualizing(self):
-        # Monthly, INR 1000/mo -> annualized 12000 INR -> converted at rate 100 -> $120
+    def test_inr_monthly_converted_per_cycle(self):
+        # Monthly, INR 1000/mo -> $10/mo at rate 100 (no annualizing)
         desired = sw.build_desired_rows(
             [self._row(currency="INR", price=1000.0, cycle=3, frequency=1)],
             usd_inr_rate=100.0,
         )
-        assert desired["Some Newsletter"]["price"] == 120.0
+        assert desired["Some Newsletter"]["price"] == 10.0
+        assert desired["Some Newsletter"]["cycle"] == "Monthly"
 
     def test_inr_conversion_applies_to_each_duplicate_separately(self):
         entries = [
@@ -199,6 +239,25 @@ class TestGetSheetSubscriptions:
         assert result["Some Newsletter"]["row"] == sw._FIRST_DATA_ROW
         assert result["Some Newsletter"]["country"] == "United States"
         assert result["Some Newsletter"]["price"] == 100
+
+    def test_reads_cycle_from_column_j(self):
+        rows = [["United States", "Investing", "Substack", "Some Newsletter", "Subscribed", "8/8/2026", 100, "Monthly"]]
+        with patch("sync_wallos_subscriptions._sheets_service", return_value=self._mock_svc(rows)):
+            result = sw.get_sheet_subscriptions()
+        assert result["Some Newsletter"]["cycle"] == "Monthly"
+
+    def test_short_row_has_empty_cycle(self):
+        rows = [["United States", "Investing", "Substack", "Some Newsletter", "Subscribed", "8/8/2026", 100]]
+        with patch("sync_wallos_subscriptions._sheets_service", return_value=self._mock_svc(rows)):
+            result = sw.get_sheet_subscriptions()
+        assert result["Some Newsletter"]["cycle"] == ""
+
+    def test_reads_through_column_j(self):
+        svc = self._mock_svc([])
+        with patch("sync_wallos_subscriptions._sheets_service", return_value=svc):
+            sw.get_sheet_subscriptions()
+        rng = svc.spreadsheets.return_value.values.return_value.get.call_args[1]["range"]
+        assert rng.endswith(":J")
 
     def test_skips_rows_with_no_service_name(self):
         rows = [["United States", "Investing", "Substack"]]  # short row, no Service cell
@@ -339,18 +398,22 @@ class TestDeleteUnmatched:
         }
         return svc
 
-    def test_delete_range_scoped_to_columns_c_through_i(self):
+    def test_deletes_whole_row_with_delete_dimension(self):
+        # Sheets Tables reject partial-row deleteRange (sync failures 2026-11-13/14),
+        # so the whole row goes — which also keeps columns J/L aligned.
         svc = self._svc_with_grid_id()
         sheet_subs = {"Stale Sub": {"row": 10}}
         sw.delete_unmatched(svc, {"Stale Sub"}, sheet_subs)
 
         request = svc.spreadsheets.return_value.batchUpdate.call_args[1]["body"]["requests"][0]
-        delete_range = request["deleteRange"]
-        assert delete_range["range"]["startColumnIndex"] == 2  # C
-        assert delete_range["range"]["endColumnIndex"] == 9    # exclusive, through I
-        assert delete_range["range"]["startRowIndex"] == 9     # row 10, 0-indexed
-        assert delete_range["range"]["endRowIndex"] == 10
-        assert delete_range["shiftDimension"] == "ROWS"
+        assert set(request) == {"deleteDimension"}
+        rng = request["deleteDimension"]["range"]
+        assert rng == {"sheetId": 1986684834, "dimension": "ROWS", "startIndex": 9, "endIndex": 10}
+
+    def test_all_deletes_sent_in_one_batch(self):
+        svc = self._svc_with_grid_id()
+        sw.delete_unmatched(svc, {"A", "B"}, {"A": {"row": 5}, "B": {"row": 6}})
+        assert svc.spreadsheets.return_value.batchUpdate.call_count == 1
 
     def test_multiple_rows_deleted_highest_row_first(self):
         svc = self._svc_with_grid_id()
@@ -358,7 +421,7 @@ class TestDeleteUnmatched:
         sw.delete_unmatched(svc, {"A", "B", "C"}, sheet_subs)
 
         requests = svc.spreadsheets.return_value.batchUpdate.call_args[1]["body"]["requests"]
-        rows_deleted = [r["deleteRange"]["range"]["startRowIndex"] + 1 for r in requests]
+        rows_deleted = [r["deleteDimension"]["range"]["startIndex"] + 1 for r in requests]
         assert rows_deleted == [20, 12, 5]
 
     def test_no_op_when_nothing_to_delete(self):
@@ -368,6 +431,61 @@ class TestDeleteUnmatched:
 
 
 # ── sort_by_expiring() ─────────────────────────────────────────────────────────
+
+class TestUpdateCycles:
+    def _run(self, desired, sheet_subs):
+        svc = MagicMock()
+        with patch("sync_wallos_subscriptions.get_sheet_subscriptions", return_value=sheet_subs):
+            unmapped = sw.update_cycles(svc, desired)
+        return svc, unmapped
+
+    def _written(self, svc):
+        batch = svc.spreadsheets.return_value.values.return_value.batchUpdate
+        if not batch.called:
+            return None
+        return {d["range"]: d["values"][0][0] for d in batch.call_args[1]["body"]["data"]}
+
+    def test_writes_changed_cycle_to_column_j(self):
+        svc, unmapped = self._run({"A": {"cycle": "Monthly"}}, {"A": {"row": 7, "cycle": "Yearly"}})
+        assert self._written(svc) == {f"'{sw.SUBSCRIPTIONS_TAB}'!J7": "Monthly"}
+        assert unmapped == []
+
+    def test_fills_empty_cycle(self):
+        svc, _ = self._run({"A": {"cycle": "Quarterly"}}, {"A": {"row": 9, "cycle": ""}})
+        assert self._written(svc) == {f"'{sw.SUBSCRIPTIONS_TAB}'!J9": "Quarterly"}
+
+    def test_unchanged_cycle_makes_no_api_call(self):
+        svc, _ = self._run({"A": {"cycle": "Monthly"}}, {"A": {"row": 7, "cycle": "Monthly"}})
+        assert self._written(svc) is None
+
+    def test_unmappable_cadence_reported_and_left_untouched(self):
+        svc, unmapped = self._run(
+            {"Weekly Thing": {"cycle": None}, "A": {"cycle": "Monthly"}},
+            {"Weekly Thing": {"row": 5, "cycle": "Monthly"}, "A": {"row": 6, "cycle": "Yearly"}},
+        )
+        assert unmapped == ["Weekly Thing"]
+        assert self._written(svc) == {f"'{sw.SUBSCRIPTIONS_TAB}'!J6": "Monthly"}  # J5 not touched
+
+    def test_row_missing_from_sheet_is_skipped(self):
+        svc, unmapped = self._run({"New": {"cycle": "Monthly"}}, {})
+        assert self._written(svc) is None and unmapped == []
+
+    def test_uses_fresh_row_positions(self):
+        # Rows may have moved during sort; J must follow the post-sort row number.
+        svc, _ = self._run({"A": {"cycle": "Yearly"}, "B": {"cycle": "Monthly"}},
+                           {"A": {"row": 12, "cycle": ""}, "B": {"row": 4, "cycle": ""}})
+        assert self._written(svc) == {
+            f"'{sw.SUBSCRIPTIONS_TAB}'!J12": "Yearly",
+            f"'{sw.SUBSCRIPTIONS_TAB}'!J4": "Monthly",
+        }
+
+    def test_batched_into_one_call_user_entered(self):
+        svc, _ = self._run({"A": {"cycle": "Monthly"}, "B": {"cycle": "Yearly"}},
+                           {"A": {"row": 3, "cycle": ""}, "B": {"row": 4, "cycle": ""}})
+        batch = svc.spreadsheets.return_value.values.return_value.batchUpdate
+        assert batch.call_count == 1
+        assert batch.call_args[1]["body"]["valueInputOption"] == "USER_ENTERED"
+
 
 class TestSortByExpiring:
     def _mock_svc(self, grid_id=1986684834):
