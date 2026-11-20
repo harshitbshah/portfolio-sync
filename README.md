@@ -249,7 +249,7 @@ GraphQL now requires browser session cookies instead of a bearer token (see
 [bradleyseanf/monarchmoneycommunity#40](https://github.com/bradleyseanf/monarchmoneycommunity/issues/40)).
 Headless `login()` no longer works — pull the cookie from a real logged-in browser instead:
 
-1. Open [app.monarch.com](https://app.monarch.com) in Chrome and make sure you're logged in.
+1. Open [app.monarch.com](https://app.monarch.com) in a **dedicated Chrome profile** used only for this ("Automation") and log in. Never open Monarch in that profile again afterwards — logging in again replaces the session. A cookie from the everyday browser died in ~2.5 days; one from a dedicated profile lasted ~60.
 2. Open DevTools → **Network** tab, refresh the page.
 3. Click any request to `api.monarch.com/graphql`.
 4. Under **Request Headers**, copy the full `Cookie:` value.
@@ -263,7 +263,7 @@ That full cookie string (must include `session_id` and `csrftoken`) is the `MONA
 | `ZERODHA_USER_ID` | Zerodha login user ID |
 | `ZERODHA_PASSWORD` | Zerodha login password |
 | `ZERODHA_TOTP_KEY` | Base32 TOTP secret from Zerodha 2FA setup — found in the QR code during 2FA enrollment |
-| `MONARCH_COOKIE` | Monarch Money browser session cookie — expires every few months (see [Cookie expiry](#cookie-expiry)) |
+| `MONARCH_COOKIE` | Monarch Money browser session cookie — lasts ~60 days (see [Cookie expiry](#cookie-expiry)) |
 | `GSHEET_SERVICE_ACCOUNT_JSON` | Full contents of the service account JSON key |
 | `NOTIFY_EMAIL` | Gmail address used to send and receive sync notifications |
 | `NOTIFY_EMAIL_APP_PASSWORD` | Gmail App Password — create at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) |
@@ -283,6 +283,7 @@ That full cookie string (must include `session_id` and `csrftoken`) is the `MONA
 | `INDIAN_PORTFOLIO_TAB` | `Indian Portfolio` | Tab name for `sync_indian_portfolio.py` |
 | `US_PORTFOLIO_TAB` | `US Portfolio` | Tab name for `sync_us_portfolio.py` |
 | `ACCOUNT_BREAKDOWN_TAB` | `US Holdings By Account` | Tab name for the per-account breakdown |
+| `MONARCH_COOKIE_SET_AT` | *(auto-managed)* | Date (`YYYY-MM-DD`) `MONARCH_COOKIE` was last refreshed — set by `update_monarch_cookie.py`; drives the cookie-age reminder in the email |
 | `KITE_ENCTOKEN_CACHE` | *(auto-managed)* | Cached Zerodha enctoken — updated automatically after each run to avoid repeated logins |
 
 `ACCOUNTS_JSON` maps each Monarch account to a row in the PF Summary tab:
@@ -337,10 +338,20 @@ Tests cover `kite_auth.py` (login flow), `sync.py` (pure logic functions), `sync
 
 ### Cookie expiry
 
-Monarch sessions last several months. When one expires the workflow fails and you'll receive a failure email. To refresh:
+Monarch cookies last ~60 days (harvested from a dedicated Chrome profile). The email tracks this:
 
-1. Re-extract the `Cookie:` header from a logged-in browser session (see [Monarch Money cookie](#monarch-money-cookie) above)
-2. Update the `MONARCH_COOKIE` GitHub Secret — or run `python update_monarch_cookie.py` and paste the cookie when prompted
+- **Every success email** has a footer line `MONARCH_COOKIE_STATUS: ok — N days old (...)`, computed from `MONARCH_COOKIE_SET_AT`.
+- **From day 50** a warning banner with the refresh steps appears and the subject gets ⚠️ (`expiring`; `overdue` from day 60).
+- **When it expires**, `sync.py` / `sync_us_portfolio.py` log `[Auth] Monarch cookie expired (HTTP 401)` plus `MONARCH_COOKIE_STATUS: expired`, and the failure email subject reads `❌ Portfolio sync FAILED — Monarch cookie expired`.
+
+The `MONARCH_COOKIE_STATUS:` prefix is stable, so an agent reading the email can key off it.
+
+To refresh (one cookie covers both portfolio-sync and the Monarch MCP server):
+
+1. Re-extract the `Cookie:` header from the dedicated profile (see [Monarch Money cookie](#monarch-money-cookie) above)
+2. `python update_monarch_cookie.py "<cookie>"` — validates it, updates the `MONARCH_COOKIE` secret and records `MONARCH_COOKIE_SET_AT`
+3. In `monarch-mcp-server`: `python login_setup.py` and paste the same cookie
+4. Trigger a manual workflow run to confirm
 
 ### Zerodha login emails
 

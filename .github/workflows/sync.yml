@@ -96,6 +96,8 @@ jobs:
       - name: Format success email
         if: success()
         id: format
+        env:
+          MONARCH_COOKIE_SET_AT: ${{ vars.MONARCH_COOKIE_SET_AT }}
         run: python format_email.py
 
       - name: Send success email
@@ -111,6 +113,12 @@ jobs:
           subject: ${{ steps.format.outputs.subject }}
           html_body: "file://email_body.html"
 
+      - name: Format failure email subject
+        if: failure()
+        id: format_failure
+        # Names the cause ("Monarch cookie expired") when the sync scripts logged the auth marker.
+        run: python format_email.py --failure
+
       - name: Send failure email
         if: failure()
         uses: dawidd6/action-send-mail@v22
@@ -121,5 +129,6 @@ jobs:
           password: ${{ secrets.NOTIFY_EMAIL_APP_PASSWORD }}
           to: ${{ secrets.NOTIFY_EMAIL }}
           from: ${{ secrets.NOTIFY_EMAIL }}
-          subject: "❌ Portfolio sync FAILED — ${{ github.run_id }}"
+          # Falls back to the generic subject if the formatter step itself failed.
+          subject: ${{ steps.format_failure.outputs.subject || format('❌ Portfolio sync FAILED — {0}', github.run_id) }}
           body: "file://sync_output.txt"

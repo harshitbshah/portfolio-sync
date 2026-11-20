@@ -9,6 +9,8 @@ import sys
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
+from monarch_auth import report_auth_failure
+
 # ── Config ────────────────────────────────────────────────────────────────────
 SHEET_ID = os.environ["GSHEET_SHEET_ID"]
 SHEET_TAB = os.getenv("GSHEET_TAB", "PF Summary")
@@ -108,7 +110,7 @@ def monarch_request(cookie: str, payload: bytes) -> dict:
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
+        if report_auth_failure(e):  # prints the marker the failure email keys off
             raise RuntimeError(
                 "MONARCH_COOKIE expired or invalid — Monarch returned "
                 f"HTTP {e.code}. Refresh the MONARCH_COOKIE secret in the "

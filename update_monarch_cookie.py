@@ -11,6 +11,7 @@ See README.md "Monarch Money cookie" for how to pull the cookie from DevTools.
 import getpass
 import json
 import subprocess
+from datetime import date
 import sys
 import urllib.request
 
@@ -71,6 +72,17 @@ def main() -> None:
         ["gh", "secret", "set", "MONARCH_COOKIE", "--repo", REPO, "--body", cookie],
         check=True,
     )
+    set_at = date.today().isoformat()
+    print(f"Recording refresh date MONARCH_COOKIE_SET_AT={set_at} (drives the expiry reminder)...")
+    result = subprocess.run(
+        ["gh", "variable", "set", "MONARCH_COOKIE_SET_AT", "--repo", REPO, "--body", set_at],
+        check=False,
+    )
+    if result.returncode != 0:
+        # The secret is already updated — the sync will work. Only the reminder date is stale.
+        print("WARNING: could not set MONARCH_COOKIE_SET_AT; the expiry reminder will be off. "
+              f"Set it manually: gh variable set MONARCH_COOKIE_SET_AT --repo {REPO} --body {set_at}",
+              file=sys.stderr)
     print("Done. Trigger a manual workflow run to confirm the fix.")
 
 

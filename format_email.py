@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Parse sync_output.txt and write an HTML email + subject to GITHUB_OUTPUT."""
 
+import html as _html
 import os
 import re
+import sys
+from datetime import datetime, timezone
+
+from monarch_auth import AUTH_MARKER, cookie_status
 
 
 def parse(text: str) -> dict:
@@ -30,6 +35,7 @@ def parse(text: str) -> dict:
         "home_mortgage": None,   # 393584.94
         "home_equity":   None,   # 338415.06
         "warnings":      [],
+        "cookie_status": None,   # "MONARCH_COOKIE_STATUS: ok — 3 days old (...)"
     }
 
     for line in text.splitlines():
@@ -179,7 +185,7 @@ def build_html(data: dict) -> str:
     # Warning banner
     warning_html = ""
     if data["warnings"]:
-        msgs = "<br>".join(f"⚠ {w}" for w in data["warnings"])
+        msgs = "<br>".join(f"⚠ {_html.escape(w)}" for w in data["warnings"])
         warning_html = (f'\n    <div style="padding:14px 24px;background:#fffbeb;border-bottom:1px solid #fde68a;">'
                         f'\n      <span style="font-size:13px;color:#92400e;">{msgs}</span>'
                         f'\n    </div>')
@@ -332,12 +338,17 @@ def build_html(data: dict) -> str:
                           f'</tr>')
         home_section = _changes_section("Real Estate", home_rows)
 
-    # Footer
+    # Footer — run link + always-on Monarch cookie status line (stable prefix, grep-able)
     footer_html = ""
+    footer_parts = []
     if data["run_url"]:
+        footer_parts.append(f'\n      <a href="{data["run_url"]}" style="color:#aaa;font-size:12px;text-decoration:none;">view run →</a>')
+    if data.get("cookie_status"):
+        footer_parts.append(f'\n      <div style="color:#aaa;font-size:11px;margin-top:4px;">{_html.escape(data["cookie_status"])}</div>')
+    if footer_parts:
         footer_html = (f'\n    <div style="padding:8px 24px 10px;border-top:1px solid #f0f0f0;">'
-                       f'\n      <a href="{data["run_url"]}" style="color:#aaa;font-size:12px;text-decoration:none;">view run →</a>'
-                       f'\n    </div>')
+                       + "".join(footer_parts)
+                       + f'\n    </div>')
 
     return f"""<!DOCTYPE html>
 <html>
@@ -363,20 +374,54 @@ def build_subject(data: dict) -> str:
     return f"{emoji} Portfolio sync | {headline}"
 
 
+def apply_cookie_status(data: dict, set_at: str | None, today) -> dict:
+    """Attach the Monarch cookie status line, and promote it to a warning when action is due."""
+    status, warning = cookie_status(set_at, today)
+    data["cookie_status"] = status
+    if warning:
+        data["warnings"].append(warning)
+    return data
+
+
+def build_failure_subject(text: str, run_id: str) -> str:
+    """Name the cause in the subject when it's the known, recurring Monarch-cookie expiry."""
+    if AUTH_MARKER in text:
+        return f"❌ Portfolio sync FAILED — Monarch cookie expired — {run_id}"
+    return f"❌ Portfolio sync FAILED — {run_id}"
+
+
+def _read_log() -> str:
+    try:
+        with open("sync_output.txt") as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
+
+
+def _write_output(key: str, value: str) -> None:
+    gh_output = os.environ.get("GITHUB_OUTPUT", "")
+    if gh_output:
+        with open(gh_output, "a") as f:
+            f.write(f"{key}={value}\n")
+
+
 if __name__ == "__main__":
-    with open("sync_output.txt") as f:
-        text = f.read()
+    text = _read_log()
+
+    if "--failure" in sys.argv[1:]:
+        subject = build_failure_subject(text, os.environ.get("GITHUB_RUN_ID", ""))
+        _write_output("subject", subject)
+        print(f"Subject: {subject}")
+        sys.exit(0)
 
     data = parse(text)
+    apply_cookie_status(data, os.environ.get("MONARCH_COOKIE_SET_AT"),
+                        datetime.now(timezone.utc).date())
     subject = build_subject(data)
     html = build_html(data)
 
     with open("email_body.html", "w") as f:
         f.write(html)
 
-    gh_output = os.environ.get("GITHUB_OUTPUT", "")
-    if gh_output:
-        with open(gh_output, "a") as f:
-            f.write(f"subject={subject}\n")
-
+    _write_output("subject", subject)
     print(f"Subject: {subject}")

@@ -28,6 +28,8 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from monarch_auth import report_auth_failure
+
 SHEET_ID = os.environ["GSHEET_SHEET_ID"]
 US_PORTFOLIO_TAB = os.getenv("US_PORTFOLIO_TAB", "US Portfolio")
 ACCOUNT_TAB = os.getenv("ACCOUNT_BREAKDOWN_TAB", "US Holdings By Account")
@@ -133,6 +135,7 @@ def _monarch_request(cookie: str, payload: bytes) -> dict:
                 import time
                 time.sleep(10 * (attempt + 1))  # 10s, then 20s
                 continue
+            report_auth_failure(e)
             raise
 
 
