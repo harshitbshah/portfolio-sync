@@ -842,7 +842,7 @@ def sync(cookie: str) -> None:
     try:
         missing = write_gain_column(get_cost_basis(cookie))
         for ticker in missing:
-            print(f"WARNING: no cost basis from Monarch for {ticker} — Gain % left blank")
+            print(f"WARNING: no cost basis from Monarch for {ticker} — Gain % left blank, excluded from the total")
         print(f"[US] Gain basis missing: {len(missing)}")
     except Exception as e:  # never let the extra column break the quantity sync
         print(f"WARNING: Could not write Gain % (skipping): {e}")

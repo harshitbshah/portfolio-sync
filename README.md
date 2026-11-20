@@ -34,7 +34,7 @@ Monarch Money is the source of truth (it integrates with all US brokerage accoun
 - **Updates** Column D (Quantity) for all tickers already in the *US Portfolio* tab
 - **Removes** rows for tickers no longer held in any brokerage account (closed positions)
 - **Inserts** new rows for tickers that appear in Monarch but not yet in the sheet — Theme and Conviction Rating are left blank for manual entry
-- Writes **Gain %** in Column F: `live Holdings ÷ total cost basis − 1` per position, plus the portfolio total. Basis is the brokers' own, read from Monarch and summed across accounts; if any account holding a ticker reports no basis, that cell is left blank and a `WARNING:` line appears in the email
+- Writes **Gain %** in Column F: `live Holdings ÷ total cost basis − 1` per position, plus the portfolio total. Basis is the brokers' own, read from Monarch and summed across accounts; if any account holding a ticker reports no basis (e.g. AMZN in the Amazon 401(k)), that cell is left blank, the ticker is left out of the total, and a `WARNING:` line appears in the email
 - **Syncs the *US Holdings By Account* tab** with a flat Ticker | Account | Qty breakdown across all brokerage accounts — updated incrementally (preserves user-added columns)
 
 Skips cash/money-market instruments and SGOV (managed separately via PF Summary): `CUR:USD`, `FCASH`, `FDRXX`, `SPAXX`, `SGOV`.

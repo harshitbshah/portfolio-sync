@@ -24,8 +24,9 @@ def build_gain_updates(
 
     rows: [(sheet_row, ticker)] for every position row currently in the tab.
     costs: {ticker: total cost}; a ticker missing here (or with cost <= 0) gets a blank cell.
-    total_row: the table's totals row; it gets the portfolio-wide % only when every
-    position has a cost (a partial total would be misleading).
+    total_row: the table's totals row. It gets the portfolio-wide %; positions with an
+    unknown cost are left out of it (their value and cost both), so one small position
+    without basis (e.g. a 401k holding) doesn't blank the whole total.
     """
     data = [{"range": f"'{tab}'!{gain_col}1", "values": [[GAIN_HEADER]]}]
     missing = []
@@ -38,8 +39,15 @@ def build_gain_updates(
             missing.append(ticker)
         data.append({"range": f"'{tab}'!{gain_col}{row}", "values": [[value]]})
     if total_row is not None:
-        total_cost = sum(costs.get(t, 0.0) for _, t in rows)
-        value = gain_formula(f"{value_col}{total_row}", total_cost) if not missing and total_cost > 0 else ""
+        known = [(r, t) for r, t in rows if t not in missing]
+        known_cost = sum(costs[t] for _, t in known)
+        if not known or known_cost <= 0:
+            value = ""
+        elif not missing:
+            value = gain_formula(f"{value_col}{total_row}", known_cost)
+        else:
+            value_sum = "(" + "+".join(f"{value_col}{r}" for r, _ in known) + ")"
+            value = gain_formula(value_sum, known_cost)
         data.append({"range": f"'{tab}'!{gain_col}{total_row}", "values": [[value]]})
     return data, sorted(missing)
 

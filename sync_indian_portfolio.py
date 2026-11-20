@@ -375,7 +375,7 @@ def sync() -> None:
     try:
         missing = write_gain_column(get_kite_costs())
         for ticker in missing:
-            print(f"WARNING: no average price from Kite for {ticker} — Gain % left blank")
+            print(f"WARNING: no average price from Kite for {ticker} — Gain % left blank, excluded from the total")
         print(f"[Indian] Gain basis missing: {len(missing)}")
     except Exception as e:  # never let the extra column break the quantity sync
         print(f"WARNING: Could not write Gain % (skipping): {e}")

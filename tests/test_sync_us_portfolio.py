@@ -610,7 +610,7 @@ class TestGainColumn:
         TestSync()._run(holdings={"AAPL": 1.0}, sheet_tickers=[(2, "AAPL")],
                         old_quantities={"AAPL": 1.0}, gain_missing=["AAPL"])
         out = capsys.readouterr().out
-        assert "WARNING: no cost basis from Monarch for AAPL" in out
+        assert "WARNING: no cost basis from Monarch for AAPL — Gain % left blank, excluded from the total" in out
         assert "[US] Gain basis missing: 1" in out
 
     def test_gain_failure_does_not_break_sync(self, capsys):

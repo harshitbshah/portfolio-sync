@@ -11,12 +11,16 @@ class TestBuildGainUpdates:
         assert data[3] == {"range": "'Tab'!F4", "values": [['=IFERROR(E4/150.5-1,"")']]}
         assert missing == []
 
-    def test_unknown_cost_leaves_row_and_total_blank(self):
-        rows = [(2, "AAA"), (3, "BBB")]
-        data, missing = gain.build_gain_updates("Tab", "D", "E", rows, {"AAA": 100.0}, 4)
+    def test_unknown_cost_blanks_row_and_total_covers_known_positions(self):
+        rows = [(2, "AAA"), (3, "BBB"), (4, "CCC")]
+        data, missing = gain.build_gain_updates("Tab", "D", "E", rows, {"AAA": 100.0, "CCC": 50.0}, 5)
         assert data[2]["values"] == [[""]]
-        assert data[3]["values"] == [[""]]  # partial total would mislead
+        assert data[4]["values"] == [['=IFERROR((D2+D4)/150.0-1,"")']]
         assert missing == ["BBB"]
+
+    def test_total_blank_when_no_cost_known(self):
+        data, _ = gain.build_gain_updates("Tab", "D", "E", [(2, "AAA")], {}, 3)
+        assert data[2]["values"] == [[""]]
 
     def test_zero_cost_counts_as_unknown(self):
         _, missing = gain.build_gain_updates("Tab", "D", "E", [(2, "AAA")], {"AAA": 0.0}, None)
