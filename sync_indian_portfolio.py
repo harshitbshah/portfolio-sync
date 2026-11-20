@@ -6,6 +6,7 @@ What this does each run:
   - Deletes rows for tickers no longer held in Zerodha (closed positions)
   - Inserts new rows for tickers in Zerodha not yet in the sheet
     (Theme is left blank — fill in manually)
+  - Writes Column E (Gain %) = live Holdings / (Kite average price x quantity) - 1
 
 Required env vars:
   KITE_ACCESS_TOKEN            Zerodha enctoken (from kite_auth.py)
@@ -23,6 +24,8 @@ import re
 import requests
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+
+from gain import build_gain_updates, percent_format_request, total_row_after
 
 SHEET_ID            = os.environ["GSHEET_SHEET_ID"]
 INDIAN_PORTFOLIO_TAB = os.getenv("INDIAN_PORTFOLIO_TAB", "Indian Portfolio")
@@ -88,6 +91,36 @@ def get_kite_positions() -> dict[str, int]:
         and int(p.get("overnight_quantity", 0)) == 0
         and int(p.get("quantity", 0)) > 0
     }
+
+
+def get_kite_costs() -> dict[str, float]:
+    """Return {tradingsymbol: total cost} = Kite average price x quantity.
+
+    Covers settled + T1 holdings and today's first-time CNC buys (same filters as
+    get_kite_holdings / get_kite_positions, so costs line up with the quantities).
+    """
+    headers = {"Authorization": f"enctoken {KITE_ACCESS_TOKEN}"}
+    costs: dict[str, float] = {}
+    for path, rows_of in (
+        ("holdings", lambda d: d.get("data", [])),
+        ("positions", lambda d: d.get("data", {}).get("net", [])),
+    ):
+        r = requests.get(f"https://kite.zerodha.com/oms/portfolio/{path}", headers=headers, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("status") != "success":
+            raise RuntimeError(f"Kite {path} fetch failed: {data.get('message')}")
+        for h in rows_of(data):
+            if path == "holdings":
+                qty = int(h.get("quantity", 0)) + int(h.get("t1_quantity", 0))
+            elif h.get("product") == "CNC" and int(h.get("overnight_quantity", 0)) == 0:
+                qty = int(h.get("quantity", 0))
+            else:
+                continue
+            avg = float(h.get("average_price") or 0)
+            if qty > 0 and avg > 0:
+                costs[h["tradingsymbol"]] = costs.get(h["tradingsymbol"], 0.0) + avg * qty
+    return costs
 
 
 # ── Google Sheets helpers ─────────────────────────────────────────────────────
@@ -234,6 +267,32 @@ def update_quantities(
     ).execute()
 
 
+def write_gain_column(costs: dict[str, float]) -> list[str]:
+    """Write Gain % formulas (column E) for every position row + the totals row."""
+    service = _sheets_service(readonly=False)
+    col_b = (
+        service.spreadsheets().values()
+        .get(spreadsheetId=SHEET_ID, range=f"'{INDIAN_PORTFOLIO_TAB}'!B:B")
+        .execute().get("values", [])
+    )
+    rows = [
+        (i + 1, row[0].strip()) for i, row in enumerate(col_b)
+        if i > 0 and row and _TICKER_RE.match(row[0].strip())
+    ]
+    total_row = total_row_after(rows, len(col_b))
+    data, missing = build_gain_updates(INDIAN_PORTFOLIO_TAB, "D", "E", rows, costs, total_row)
+    service.spreadsheets().values().batchUpdate(
+        spreadsheetId=SHEET_ID,
+        body={"valueInputOption": "USER_ENTERED", "data": data},
+    ).execute()
+    end_row = total_row or (max(r for r, _ in rows) if rows else 1)
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=SHEET_ID,
+        body={"requests": [percent_format_request(get_sheet_grid_id(), 4, end_row)]},
+    ).execute()
+    return missing
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def sync() -> None:
@@ -311,6 +370,15 @@ def sync() -> None:
     for ticker in sorted(to_add):
         print(f"[Indian] Added: {ticker} +{holdings[ticker]}")
     print(f"[Indian] Unchanged: {unchanged}")
+
+    print("\nWriting Gain % (live value vs Kite average cost)...")
+    try:
+        missing = write_gain_column(get_kite_costs())
+        for ticker in missing:
+            print(f"WARNING: no average price from Kite for {ticker} — Gain % left blank")
+        print(f"[Indian] Gain basis missing: {len(missing)}")
+    except Exception as e:  # never let the extra column break the quantity sync
+        print(f"WARNING: Could not write Gain % (skipping): {e}")
 
     try:
         cash = get_kite_cash()

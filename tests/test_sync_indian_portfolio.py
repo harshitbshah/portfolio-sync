@@ -172,6 +172,8 @@ class TestSync:
              patch("sync_indian_portfolio.get_kite_positions", return_value=kite_positions or {}), \
              patch("sync_indian_portfolio.get_sheet_holdings", side_effect=sheet_sequence), \
              patch("sync_indian_portfolio.get_kite_cash", return_value=0.0), \
+             patch("sync_indian_portfolio.get_kite_costs", return_value={}), \
+             patch("sync_indian_portfolio.write_gain_column", return_value=[]), \
              patch("sync_indian_portfolio.update_quantities") as mock_upd, \
              patch("sync_indian_portfolio.delete_closed_rows") as mock_del, \
              patch("sync_indian_portfolio.insert_new_rows") as mock_ins:
@@ -280,3 +282,35 @@ class TestSync:
         body = mock_svc.spreadsheets.return_value.batchUpdate.call_args[1]["body"]
         indices = [r["deleteRange"]["range"]["startRowIndex"] for r in body["requests"]]
         assert indices == sorted(indices, reverse=True)
+
+
+class TestGetKiteCosts:
+    def _resps(self, holdings, net):
+        h = MagicMock(); h.json.return_value = {"status": "success", "data": holdings}
+        p = MagicMock(); p.json.return_value = {"status": "success", "data": {"net": net}}
+        return [h, p]
+
+    def test_average_price_times_settled_plus_t1(self):
+        holdings = [{"tradingsymbol": "ABC", "quantity": 10, "t1_quantity": 2, "average_price": 100.5}]
+        with patch("sync_indian_portfolio.requests.get", side_effect=self._resps(holdings, [])):
+            assert sip.get_kite_costs() == {"ABC": 1206.0}
+
+    def test_adds_todays_first_time_cnc_buys_only(self):
+        net = [
+            {"tradingsymbol": "NEW", "product": "CNC", "overnight_quantity": 0, "quantity": 5, "average_price": 20.0},
+            {"tradingsymbol": "MIS1", "product": "MIS", "overnight_quantity": 0, "quantity": 5, "average_price": 20.0},
+            {"tradingsymbol": "OLD", "product": "CNC", "overnight_quantity": 3, "quantity": 3, "average_price": 20.0},
+        ]
+        with patch("sync_indian_portfolio.requests.get", side_effect=self._resps([], net)):
+            assert sip.get_kite_costs() == {"NEW": 100.0}
+
+    def test_skips_missing_average_price(self):
+        holdings = [{"tradingsymbol": "ABC", "quantity": 10, "average_price": 0}]
+        with patch("sync_indian_portfolio.requests.get", side_effect=self._resps(holdings, [])):
+            assert sip.get_kite_costs() == {}
+
+    def test_raises_on_api_error(self):
+        bad = MagicMock(); bad.json.return_value = {"status": "error", "message": "nope"}
+        with patch("sync_indian_portfolio.requests.get", return_value=bad):
+            with pytest.raises(RuntimeError):
+                sip.get_kite_costs()

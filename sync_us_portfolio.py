@@ -5,6 +5,8 @@ Source of truth: Monarch Money brokerage accounts.
 
 What this does each run:
   - Updates Column D (Quantity) for all tickers already in the sheet
+  - Writes Column F (Gain %) = live Holdings / broker cost basis - 1 (basis from Monarch,
+    summed across accounts; blank when an account doesn't report basis)
   - Deletes rows for tickers no longer held in Monarch (closed positions)
   - Inserts new rows for tickers in Monarch not yet in the sheet
     (Theme and Conviction Rating are left blank — fill in manually)
@@ -28,6 +30,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from gain import build_gain_updates, percent_format_request, total_row_after
 from monarch_auth import report_auth_failure
 
 SHEET_ID = os.environ["GSHEET_SHEET_ID"]
@@ -148,6 +151,7 @@ query GetHoldings($accountId: ID!) {
             edges {
                 node {
                     quantity
+                    basis
                     holdings { ticker }
                 }
             }
@@ -194,7 +198,69 @@ def get_all_holdings(cookie: str) -> dict[str, float]:
     }
 
 
+def get_cost_basis(cookie: str) -> dict[str, float]:
+    """Return {ticker: total cost basis} across all active brokerage accounts.
+
+    A ticker is left out entirely if any account holds it without reporting a basis,
+    so the sheet shows a blank instead of an understated cost (an inflated gain).
+    """
+    result = _monarch_request(cookie, json.dumps({"query": _ACCOUNTS_QUERY}).encode())
+    accounts = result.get("data", {}).get("accounts", [])
+    brokerage_ids = [
+        a["id"] for a in accounts
+        if a.get("type", {}).get("name") == "brokerage" and not a.get("deactivatedAt")
+    ]
+    totals: dict[str, float] = defaultdict(float)
+    unknown: set[str] = set()
+    for account_id in brokerage_ids:
+        payload = json.dumps({"query": _HOLDINGS_QUERY, "variables": {"accountId": account_id}}).encode()
+        data = _monarch_request(cookie, payload)
+        edges = data.get("data", {}).get("portfolio", {}).get("aggregateHoldings", {}).get("edges", [])
+        for edge in edges:
+            node = edge.get("node", {})
+            qty = node.get("quantity") or 0.0
+            basis = node.get("basis")
+            for holding in node.get("holdings", []):
+                ticker = holding.get("ticker")
+                if not ticker or ticker in _SKIP_TICKERS or not _TICKER_RE.match(ticker) or qty <= 0:
+                    continue
+                if not basis or basis <= 0:
+                    unknown.add(ticker)
+                else:
+                    totals[ticker] += basis
+    return {t: b for t, b in totals.items() if t not in unknown}
+
+
 # ── Sync operations ───────────────────────────────────────────────────────────
+
+def write_gain_column(basis: dict[str, float]) -> list[str]:
+    """Write Gain % formulas (column F) for every position row + the totals row.
+
+    Runs after the sort, on freshly read row numbers. Returns tickers left blank.
+    """
+    service = _sheets_service(readonly=False)
+    col_b = (
+        service.spreadsheets().values()
+        .get(spreadsheetId=SHEET_ID, range=f"'{US_PORTFOLIO_TAB}'!B:B")
+        .execute().get("values", [])
+    )
+    rows = [
+        (i + 1, row[0].strip()) for i, row in enumerate(col_b)
+        if i > 0 and row and _TICKER_RE.match(row[0].strip())
+    ]
+    total_row = total_row_after(rows, len(col_b))
+    data, missing = build_gain_updates(US_PORTFOLIO_TAB, "E", "F", rows, basis, total_row)
+    service.spreadsheets().values().batchUpdate(
+        spreadsheetId=SHEET_ID,
+        body={"valueInputOption": "USER_ENTERED", "data": data},
+    ).execute()
+    end_row = total_row or (max(r for r, _ in rows) if rows else 1)
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=SHEET_ID,
+        body={"requests": [percent_format_request(get_sheet_grid_id(), 5, end_row)]},
+    ).execute()
+    return missing
+
 
 def delete_closed_rows(to_remove: set[str], sheet_tickers: list[tuple[int, str]]) -> None:
     """Delete rows for tickers no longer held. Processes in reverse row order."""
@@ -770,6 +836,16 @@ def sync(cookie: str) -> None:
     # ── Step 4: Sort US Portfolio by holdings (Amount) descending ─────────────
     print("\nSorting US Portfolio by holdings...")
     sort_portfolio_sheet(sheet_tickers)
+
+    # ── Step 4b: Gain % per position (after the sort, so row numbers are final) ─
+    print("\nWriting Gain % (live value vs broker cost basis)...")
+    try:
+        missing = write_gain_column(get_cost_basis(cookie))
+        for ticker in missing:
+            print(f"WARNING: no cost basis from Monarch for {ticker} — Gain % left blank")
+        print(f"[US] Gain basis missing: {len(missing)}")
+    except Exception as e:  # never let the extra column break the quantity sync
+        print(f"WARNING: Could not write Gain % (skipping): {e}")
 
     # ── Step 5: Sync Holdings by Account tab ─────────────────────────────────
     print("\nFetching per-account breakdown...")

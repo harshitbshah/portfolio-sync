@@ -16,6 +16,7 @@ Validates a cached enctoken (`KITE_ENCTOKEN_CACHE` GitHub variable) before attem
 - **Updates** Column C (Quantity) for all tickers already in the *Indian Portfolio* tab
 - **Removes** rows for tickers no longer held in Zerodha (closed positions)
 - **Inserts** new rows for tickers in Zerodha not yet in the sheet — Theme is left blank for manual entry
+- Writes **Gain %** in Column E: `live Holdings ÷ (Kite average price × quantity) − 1` per position, plus the portfolio total. Cost comes from Zerodha (Monarch's Zerodha account is manual, balance only); the % stays live because Holdings is a live price
 - Fetches available cash balance from the Kite margins API and emits a `[Indian] Margin:` log line for the email
 
 ### 3. `sync.py` — Monarch balances → PF Summary sheet + email data
@@ -33,6 +34,7 @@ Monarch Money is the source of truth (it integrates with all US brokerage accoun
 - **Updates** Column D (Quantity) for all tickers already in the *US Portfolio* tab
 - **Removes** rows for tickers no longer held in any brokerage account (closed positions)
 - **Inserts** new rows for tickers that appear in Monarch but not yet in the sheet — Theme and Conviction Rating are left blank for manual entry
+- Writes **Gain %** in Column F: `live Holdings ÷ total cost basis − 1` per position, plus the portfolio total. Basis is the brokers' own, read from Monarch and summed across accounts; if any account holding a ticker reports no basis, that cell is left blank and a `WARNING:` line appears in the email
 - **Syncs the *US Holdings By Account* tab** with a flat Ticker | Account | Qty breakdown across all brokerage accounts — updated incrementally (preserves user-added columns)
 
 Skips cash/money-market instruments and SGOV (managed separately via PF Summary): `CUR:USD`, `FCASH`, `FDRXX`, `SPAXX`, `SGOV`.

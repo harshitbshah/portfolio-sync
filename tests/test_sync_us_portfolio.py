@@ -467,7 +467,7 @@ class TestSortPortfolioSheet:
 # ── sync() ────────────────────────────────────────────────────────────────────
 
 class TestSync:
-    def _run(self, holdings, sheet_tickers, old_quantities=None):
+    def _run(self, holdings, sheet_tickers, old_quantities=None, gain_missing=None):
         if old_quantities is None:
             old_quantities = {}
         with patch("sync_us_portfolio.get_all_holdings", return_value=holdings), \
@@ -478,7 +478,9 @@ class TestSync:
              patch("sync_us_portfolio.sort_portfolio_sheet"), \
              patch("sync_us_portfolio.update_quantities"), \
              patch("sync_us_portfolio.get_holdings_by_account", return_value={}), \
-             patch("sync_us_portfolio.sync_account_tab"):
+             patch("sync_us_portfolio.sync_account_tab"), \
+             patch("sync_us_portfolio.get_cost_basis", return_value={}), \
+             patch("sync_us_portfolio.write_gain_column", return_value=gain_missing or []):
             usp.sync("token")
 
     def test_emits_diff_for_quantity_increase(self, capsys):
@@ -537,7 +539,9 @@ class TestSync:
              patch("sync_us_portfolio.sort_portfolio_sheet") as mock_sort, \
              patch("sync_us_portfolio.update_quantities"), \
              patch("sync_us_portfolio.get_holdings_by_account", return_value={}), \
-             patch("sync_us_portfolio.sync_account_tab"):
+             patch("sync_us_portfolio.sync_account_tab"), \
+             patch("sync_us_portfolio.get_cost_basis", return_value={}), \
+             patch("sync_us_portfolio.write_gain_column", return_value=[]):
             usp.sync("token")
         mock_sort.assert_called_once()
 
@@ -548,7 +552,9 @@ class TestSync:
              patch("sync_us_portfolio.update_quantities"), \
              patch("sync_us_portfolio.sort_portfolio_sheet") as mock_sort, \
              patch("sync_us_portfolio.get_holdings_by_account", return_value={}), \
-             patch("sync_us_portfolio.sync_account_tab"):
+             patch("sync_us_portfolio.sync_account_tab"), \
+             patch("sync_us_portfolio.get_cost_basis", return_value={}), \
+             patch("sync_us_portfolio.write_gain_column", return_value=[]):
             usp.sync("token")
         mock_sort.assert_called_once()
 
@@ -597,3 +603,65 @@ class TestSync:
             usp.sync("token")
         mock_gba.assert_called_once_with("token")
         mock_sat.assert_called_once_with(breakdown)
+
+
+class TestGainColumn:
+    def test_warns_about_tickers_without_basis(self, capsys):
+        TestSync()._run(holdings={"AAPL": 1.0}, sheet_tickers=[(2, "AAPL")],
+                        old_quantities={"AAPL": 1.0}, gain_missing=["AAPL"])
+        out = capsys.readouterr().out
+        assert "WARNING: no cost basis from Monarch for AAPL" in out
+        assert "[US] Gain basis missing: 1" in out
+
+    def test_gain_failure_does_not_break_sync(self, capsys):
+        with patch("sync_us_portfolio.get_all_holdings", return_value={"AAPL": 1.0}), \
+             patch("sync_us_portfolio.get_sheet_tickers", return_value=[(2, "AAPL")]), \
+             patch("sync_us_portfolio.get_sheet_quantities", return_value={"AAPL": 1.0}), \
+             patch("sync_us_portfolio.sort_portfolio_sheet"), \
+             patch("sync_us_portfolio.update_quantities"), \
+             patch("sync_us_portfolio.get_holdings_by_account", return_value={}), \
+             patch("sync_us_portfolio.sync_account_tab") as mock_acct, \
+             patch("sync_us_portfolio.get_cost_basis", side_effect=RuntimeError("boom")):
+            usp.sync("token")
+        assert "WARNING: Could not write Gain % (skipping): boom" in capsys.readouterr().out
+        mock_acct.assert_called_once()
+
+
+class TestGetCostBasis:
+    def _accounts(self, ids):
+        return {"data": {"accounts": [
+            {"id": i, "deactivatedAt": None, "type": {"name": "brokerage"}} for i in ids]}}
+
+    def _holdings(self, rows):
+        return {"data": {"portfolio": {"aggregateHoldings": {"edges": [
+            {"node": {"quantity": q, "basis": b, "holdings": [{"ticker": t}]}} for t, q, b in rows]}}}}
+
+    def test_sums_basis_across_accounts(self):
+        with patch("sync_us_portfolio._monarch_request", side_effect=[
+            self._accounts(["a1", "a2"]),
+            self._holdings([("AAPL", 10.0, 1500.0), ("MSFT", 2.0, 600.0)]),
+            self._holdings([("AAPL", 5.0, 900.0)]),
+        ]):
+            assert usp.get_cost_basis("c") == {"AAPL": 2400.0, "MSFT": 600.0}
+
+    def test_drops_ticker_when_any_account_lacks_basis(self):
+        with patch("sync_us_portfolio._monarch_request", side_effect=[
+            self._accounts(["a1", "a2"]),
+            self._holdings([("AAPL", 10.0, 1500.0)]),
+            self._holdings([("AAPL", 5.0, None)]),
+        ]):
+            assert usp.get_cost_basis("c") == {}
+
+    def test_skips_cash_and_skip_tickers(self):
+        with patch("sync_us_portfolio._monarch_request", side_effect=[
+            self._accounts(["a1"]),
+            self._holdings([("SGOV", 100.0, 10000.0), ("USD-USD", 5.0, 0.0), ("AAPL", 1.0, 150.0)]),
+        ]):
+            assert usp.get_cost_basis("c") == {"AAPL": 150.0}
+
+    def test_ignores_zero_quantity_rows(self):
+        with patch("sync_us_portfolio._monarch_request", side_effect=[
+            self._accounts(["a1"]),
+            self._holdings([("AAPL", 0.0, 0.0), ("MSFT", 1.0, 300.0)]),
+        ]):
+            assert usp.get_cost_basis("c") == {"MSFT": 300.0}
